@@ -1,0 +1,9 @@
+# test tools and output (see tests/README.md)
+tests/node_modules/
+tests/.libs/
+tests/.work/
+tests/shots/
+# text of the publishers' sample books
+tests/baseline/
+*.zip
+tests/ui.log

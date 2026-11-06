@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Vanchan</title>
+  <meta name="description" content="Read your Gujarati books as short swipeable cards, offline.">
+  <meta name="theme-color" content="#FBF8F3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16130F" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Vanchan">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="app">
+    <header class="bar">
+      <button class="icon-btn" id="btnLib" aria-label="Library" title="Library">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Zm6 0V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1Zm5.2-12.8 2.9-.8a1 1 0 0 1 1.2.7l3.3 12.5a1 1 0 0 1-.7 1.2l-2.9.8a1 1 0 0 1-1.2-.7L14.5 7.4a1 1 0 0 1 .7-1.2Z"/></svg>
+      </button>
+      <button class="scope" id="btnScope" aria-label="Choose book">
+        <span id="scopeName">Vanchan</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+      </button>
+      <button class="icon-btn" id="btnSearch" aria-label="Search" title="Search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg>
+      </button>
+      <button class="icon-btn" id="btnSaved" aria-label="Saved cards" title="Saved cards">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1Z"/></svg>
+      </button>
+      <button class="icon-btn aa" id="btnAa" aria-label="Reading settings" title="Reading settings">Aa</button>
+    </header>
+
+    <main id="feed">
+      <div id="stack" aria-live="polite"></div>
+      <div class="nav-btns" id="navBtns">
+        <button class="icon-btn" id="btnPrev" aria-label="Previous card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></button>
+        <button class="icon-btn" id="btnNext" aria-label="Next card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+      </div>
+
+      <section id="welcome" class="welcome" hidden>
+        <img src="icons/icon-192.png" alt="" width="84" height="84">
+        <h1>Read books as cards</h1>
+        <p class="gu" lang="gu">પુસ્તક ઉમેરો — દરેક વિષય એક કાર્ડ બનશે.</p>
+        <p>Add a PDF, EPUB or Markdown file. Each sub-topic becomes a card, shown in random order. Swipe up for the next one.</p>
+        <button class="primary" id="btnAddFirst">Add a book</button>
+        <p class="fine">Books stay on this device and work offline.</p>
+      </section>
+    </main>
+  </div>
+
+  <input type="file" id="file" accept=".pdf,.epub,.md,.markdown,.txt,application/pdf,application/epub+zip,text/markdown,text/plain" multiple hidden>
+
+  <!-- Library -->
+  <div class="sheet" id="sheetLib" role="dialog" aria-modal="true" aria-labelledby="libTitle" hidden>
+    <div class="sheet-panel">
+      <div class="sheet-head">
+        <h2 id="libTitle">Library</h2>
+        <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <button class="primary wide" id="btnAdd">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Add a book
+        </button>
+        <ul class="book-list" id="bookList"></ul>
+        <p class="fine">Gujarati PDFs made with the older Krishna / Chitra / Girdhar fonts are converted to Unicode. Scanned (image-only) PDFs can't be read.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Saved -->
+  <div class="sheet" id="sheetSaved" role="dialog" aria-modal="true" aria-labelledby="savedTitle" hidden>
+    <div class="sheet-panel">
+      <div class="sheet-head">
+        <h2 id="savedTitle">Saved cards</h2>
+        <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <ul class="saved-list" id="savedList"></ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reading settings -->
+  <div class="sheet" id="sheetAa" role="dialog" aria-modal="true" aria-labelledby="aaTitle" hidden>
+    <div class="sheet-panel">
+      <div class="sheet-head">
+        <h2 id="aaTitle">Reading</h2>
+        <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <div class="field">
+          <label for="fs">Text size</label>
+          <div class="size-row">
+            <span class="a-small" aria-hidden="true">અ</span>
+            <input type="range" id="fs" min="14" max="30" step="1">
+            <span class="a-big" aria-hidden="true">અ</span>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">Font</span>
+          <div class="seg" data-setting="font">
+            <button data-v="serif" class="gu" lang="gu">અક્ષર · Serif</button>
+            <button data-v="sans" class="gu sans" lang="gu">અક્ષર · Sans</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">Theme</span>
+          <div class="seg" data-setting="theme">
+            <button data-v="auto">Auto</button>
+            <button data-v="light">Light</button>
+            <button data-v="sepia">Sepia</button>
+            <button data-v="dark">Dark</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">Card order</span>
+          <div class="seg" data-setting="order">
+            <button data-v="random">Random</button>
+            <button data-v="book">Book order</button>
+          </div>
+        </div>
+        <div class="field" id="installRow" hidden>
+          <button class="secondary wide" id="btnInstall">Install app</button>
+        </div>
+        <p class="fine" id="iosHint" hidden>To use it like an app and keep your books safe: tap <b>Share</b>, then <b>Add to Home Screen</b>.</p>
+        <div class="field danger-zone">
+          <button class="link" id="btnResetRead">Mark all cards unread</button>
+        </div>
+        <p class="fine" id="storageNote"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Contents of a book -->
+  <div class="sheet" id="sheetToc" role="dialog" aria-modal="true" aria-labelledby="tocTitle" hidden>
+    <div class="sheet-panel tall">
+      <div class="sheet-head">
+        <h2 id="tocTitle"><span>Contents</span><small id="tocBook"></small></h2>
+        <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <ul class="toc" id="tocList"></ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Search -->
+  <div class="sheet" id="sheetSearch" role="dialog" aria-modal="true" aria-label="Search" hidden>
+    <div class="sheet-panel tall">
+      <div class="search-head">
+        <label class="search-box">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg>
+          <input type="search" id="q" placeholder="Search · શોધો" enterkeyhint="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Search the cards">
+        </label>
+        <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="seg search-scope" id="qScope" hidden>
+        <button data-v="book" id="qScopeBook">This book</button>
+        <button data-v="all">All books</button>
+      </div>
+      <div class="sheet-body">
+        <p class="search-count" id="qCount"></p>
+        <ul class="saved-list search-list" id="qList"></ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card menu -->
+  <div class="sheet" id="sheetMenu" role="dialog" aria-modal="true" aria-label="Card options" hidden>
+    <div class="sheet-panel small">
+      <div class="sheet-body menu">
+        <button id="mCopy">Copy text</button>
+        <button id="mHide">Don't show this card again</button>
+        <button id="mRandom" hidden>Back to random cards</button>
+        <button id="mToc">Contents of this book</button>
+        <button id="mBookOrder">Read this book in order from here</button>
+        <button data-close>Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Original page of a PDF -->
+  <div class="viewer" id="viewer" role="dialog" aria-modal="true" aria-labelledby="vTitle" hidden>
+    <div class="viewer-bar">
+      <button class="icon-btn" id="vClose" aria-label="Back to card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      <div class="viewer-title"><span id="vTitle">Page</span><span id="vSub"></span></div>
+      <button class="icon-btn" id="vZoom" aria-label="Zoom"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M11 8v6M8 11h6"/></svg></button>
+      <button class="icon-btn" id="vPrev" aria-label="Previous page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 7l-5 5 5 5"/></svg></button>
+      <button class="icon-btn" id="vNext" aria-label="Next page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 7l5 5-5 5"/></svg></button>
+    </div>
+    <div class="viewer-body" id="vBody">
+      <canvas id="vCanvas"></canvas>
+      <p id="vMsg" class="fine" hidden></p>
+    </div>
+  </div>
+
+  <!-- Import progress -->
+  <div class="modal" id="importModal" role="dialog" aria-modal="true" aria-labelledby="impTitle" hidden>
+    <div class="modal-box">
+      <h2 id="impTitle">Adding book…</h2>
+      <p id="impFile" class="imp-file"></p>
+      <div class="meter"><div id="impBar"></div></div>
+      <p id="impStatus" class="fine"></p>
+      <button class="secondary" id="impCancel">Cancel</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" hidden><span id="toastText"></span><button id="toastAction" hidden></button></div>
+
+  <script src="js/gujlegacy.js"></script>
+  <script src="js/pdfbook.js"></script>
+  <script src="js/epubbook.js"></script>
+  <script src="js/mdbook.js"></script>
+  <script src="js/cards.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

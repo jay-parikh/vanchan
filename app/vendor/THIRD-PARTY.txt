@@ -1,0 +1,11 @@
+pdf.js 3.11.174 (pdf.min.js, pdf.worker.min.js)
+  Copyright Mozilla Foundation. Apache License 2.0.
+  https://github.com/mozilla/pdf.js
+
+JSZip 3.10.1 (jszip.min.js)
+  Copyright Stuart Knightley and contributors. MIT License (dual-licensed MIT / GPLv3).
+  https://github.com/Stuk/jszip
+
+Noto Serif Gujarati, Noto Sans Gujarati (fonts/*.woff2)
+  Copyright The Noto Project Authors. SIL Open Font License 1.1.
+  https://fonts.google.com/noto
