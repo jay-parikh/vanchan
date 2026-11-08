@@ -28,30 +28,43 @@ Google Cloud.
 
 ## 3. Google sign-in
 
+First copy the **Callback URL** from Supabase **Authentication → Sign In /
+Providers → Google**. It looks like
+`https://<project-ref>.supabase.co/auth/v1/callback`.
+
 In Google Cloud (https://console.cloud.google.com), signed in with your
 Google account:
 
-1. Make a new project with the top project picker → **New project**, named
-   `Vanchan`.
-2. Go to **APIs & Services → OAuth consent screen** (it may be called
-   **Google Auth Platform**) and fill it in:
+1. With the project picker → **New project**, create `Vanchan`, then select it.
+2. Open **APIs & Services → OAuth consent screen** (it may be called **Google
+   Auth Platform**) → **Get started** and fill in:
    - App name: `Vanchan`
-   - User support email and developer email: your email
+   - User support email: your email
    - Audience: **External**
-   - Scopes: leave the defaults (email, profile, openid). These basic scopes
-     need no review by Google.
-   - **Publish the app** (Audience → Publish), so anyone, not only test users,
-     can sign in.
-3. Go to **Credentials → Create credentials → OAuth client ID** and create it:
-   - Application type: **Web application**, name `Vanchan`
-   - Authorised redirect URIs: `https://<project-ref>.supabase.co/auth/v1/callback`
-     (your Project URL from step 1, plus `/auth/v1/callback`)
-   - Copy the **Client ID** and **Client secret**.
+   - Contact email: yours
+   Tick the agreement, then **Create**.
+3. **Branding → Authorized domains**: add `<project-ref>.supabase.co`, then save.
+4. **Data Access → Add or remove scopes**: tick `.../auth/userinfo.email`,
+   `.../auth/userinfo.profile` and `openid`, then **Update** and **Save**.
+   These are basic scopes, so Google does not review the app.
+5. **Clients → Create client** with these settings:
+   - Type: **Web application**, name `Vanchan web`
+   - Authorized JavaScript origins: `https://vanchan.netlify.app`
+   - Authorized redirect URIs: the Callback URL copied above
+   Press **Create**, then **copy the Client ID and Client secret right away**
+   (or Download JSON). Google may show the secret only once. If it is lost,
+   add a new secret on the client's page.
+6. **Audience → Publish app**, so it shows "In production". Otherwise only
+   listed test users can sign in.
+
+Keep the Client secret private. It goes only into Supabase, never into the
+app.
 
 ## 4. Connect Google to Supabase
 
 1. In Supabase, open **Authentication → Sign In / Providers → Google**.
-2. Switch it on and paste the Client ID and Client secret. Save.
+2. Switch it on, paste the Client ID (the field may be called "Client IDs") and
+   the Client secret, and save.
 3. Open **Authentication → URL Configuration** and set:
    - Site URL: `https://vanchan.netlify.app`
    - Redirect URLs (add each):
