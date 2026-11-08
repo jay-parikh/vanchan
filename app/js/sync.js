@@ -147,7 +147,29 @@
     return A.setKv('sync:session', s).catch(function () {});
   }
 
+  // Supabase replaces the refresh token on every use, so two refreshes at
+  // once (leaving the app mid-sync, or two tabs) would sign this device out.
+  // Only one runs at a time in this tab; between tabs a Web Lock takes turns,
+  // and a token another tab already renewed is used instead of renewing again.
+  var refreshing = null;
   function refresh() {
+    if (!refreshing) {
+      var used = session && session.refresh_token;
+      var run = function () { return refreshOnce(used); };
+      var p = navigator.locks && navigator.locks.request ? navigator.locks.request('vanchan-token', run) : run();
+      refreshing = p.then(function (v) { refreshing = null; return v; }, function (e) { refreshing = null; throw e; });
+    }
+    return refreshing;
+  }
+
+  function refreshOnce(used) {
+    return A.getKv('sync:session', null).catch(function () { return null; }).then(function (saved) {
+      if (saved && saved.refresh_token && saved.refresh_token !== used) { session = saved; return session; }
+      return refreshFetch();
+    });
+  }
+
+  function refreshFetch() {
     if (!session || !session.refresh_token) return Promise.reject(authError());
     return fetchT(base + '/auth/v1/token?grant_type=refresh_token', {
       method: 'POST', headers: headers(null, { 'Content-Type': 'application/json' }),
@@ -468,9 +490,9 @@
         });
       });
       if (downloads.length) {
-        chain = chain.then(function () { return A.gettingBooks && A.gettingBooks(downloads.length); });
-        downloads.forEach(function (r) {
+        downloads.forEach(function (r, i) {
           chain = chain.then(function () {
+            if (A.gettingBook) A.gettingBook(i + 1, downloads.length, r.title);
             return api('GET', '/storage/v1/object/authenticated/' + objectPath(r.book_key), { raw: true, timeout: 120000 }).then(function (res) {
               if (!res.ok) return null;      // file not there (yet): try again next time
               return res.arrayBuffer().then(function (data) { return A.addRemoteBook(r, data); });
@@ -548,7 +570,7 @@
   // adapter: books(), bookOfCard(id), progressOfBook(bookId) -> {read, marks, hidden} card numbers,
   // applyProgress(bookId, {read, marks, hidden}) -> changed?, progressChanged(), getFile(id), saveBook(b),
   // addRemoteBook(row, data), removeBook(id), renameBook(id, title, at), offerContinue(bookId, n, name),
-  // gettingBooks(n), gotBooks(n), getKv(k, d), setKv(k, v), onStatus(), toast(text)
+  // gettingBook(i, n, title), gotBooks(n), getKv(k, d), setKv(k, v), onStatus(), toast(text)
   function init(adapter) {
     A = adapter;
     if (!cfg) return Promise.resolve();
@@ -587,7 +609,9 @@
     sha256: sha256,
     status: function () {
       return { on: isOn(), email: session && session.user ? session.user.email : '', signedIn: !!session,
-        busy: status.busy, error: status.error, lastSync: status.lastSync };
+        busy: status.busy, error: status.error, lastSync: status.lastSync,
+        // books added before the app kept original files: nothing to upload
+        cantSync: A ? A.books().filter(function (b) { return !b.key && !b.hasFile; }).length : 0 };
     },
     read: api_.read, mark: api_.mark, hide: api_.hide, pos: api_.pos, resetRead: api_.resetRead,
     bookAdded: api_.bookAdded, bookChanged: api_.bookChanged, bookDeleted: api_.bookDeleted, remap: api_.remap,

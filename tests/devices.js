@@ -37,13 +37,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const USER = '6f1c2a5e-0000-4000-8000-000000000001';
 const db = { vanchan_books: [], vanchan_progress: [] }, files = {}, hits = [];
-let tokenN = 0;
+let tokenN = 0, ttl = 3600, validFrom = 0;
+const liveRefresh = new Set(), reused = [];
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
-function token() { tokenN++; return b64({ alg: 'none' }) + '.' + b64({ sub: USER, email: 'reader@example.com', exp: Math.floor(Date.now() / 1000) + 3600, n: tokenN }) + '.sig'; }
+function token() { tokenN++; liveRefresh.add('rt' + tokenN); return b64({ alg: 'none' }) + '.' + b64({ sub: USER, email: 'reader@example.com', exp: Math.floor(Date.now() / 1000) + ttl, n: tokenN }) + '.sig'; }
 function userOf(req) {
   const m = (req.headers.authorization || '').match(/^Bearer (.+)$/);
   if (!m || !req.headers.apikey) return null;
   try { return JSON.parse(Buffer.from(m[1].split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString()).sub; } catch (e) { return null; }
+}
+function tokenNo(req) {
+  try { return JSON.parse(Buffer.from((req.headers.authorization || '').split(' ')[1].split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString()).n || 0; } catch (e) { return 0; }
 }
 function body(req) { return new Promise((r) => { const c = []; req.on('data', (d) => c.push(d)); req.on('end', () => r(Buffer.concat(c))); }); }
 const CORS = {
@@ -66,10 +70,17 @@ async function fake(req, res, url) {
     res.writeHead(302, { Location: back + '#access_token=' + token() + '&refresh_token=rt' + tokenN + '&expires_in=3600&token_type=bearer' });
     return res.end();
   }
-  if (p === '/auth/v1/token') return send(res, 200, { access_token: token(), refresh_token: 'rt' + tokenN, expires_in: 3600 });
+  if (p === '/auth/v1/token') {
+    // like Supabase: a refresh token works once, then it is replaced
+    const rt = JSON.parse((await body(req)).toString() || '{}').refresh_token;
+    if (!liveRefresh.has(rt)) { reused.push(rt); return send(res, 400, { error: 'invalid_grant', error_description: 'Invalid Refresh Token: Already Used' }); }
+    liveRefresh.delete(rt);
+    return send(res, 200, { access_token: token(), refresh_token: 'rt' + tokenN, expires_in: ttl });
+  }
   if (p === '/auth/v1/logout') return send(res, 204, null);
   const uid = userOf(req);
   if (!uid) return send(res, 401, { message: 'no token' });
+  if (tokenNo(req) < validFrom) return send(res, 401, { message: 'JWT expired' });
   let m;
   if ((m = p.match(/^\/rest\/v1\/(vanchan_books|vanchan_progress)$/))) {
     const t = db[m[1]];
@@ -127,6 +138,13 @@ async function device(browser, name) {
   page.on('console', (m) => { if (m.type() === 'error' && !/favicon|Failed to load resource/i.test(m.text())) page.errors.push(m.text()); });
   page.on('dialog', async (d) => { page.dialogs.push(d.message()); if (d.type() === 'prompt') await d.accept('Renamed on A'); else await d.accept(); });
   await page.setViewport({ width: 390, height: 800, isMobile: true, hasTouch: true });
+  await page.evaluateOnNewDocument(() => {
+    window.__toasts = [];
+    document.addEventListener('DOMContentLoaded', () => {
+      const t = document.getElementById('toastText');
+      new MutationObserver(() => window.__toasts.push(t.textContent)).observe(t, { childList: true, characterData: true, subtree: true });
+    });
+  });
   page.label = name;
   return page;
 }
@@ -209,6 +227,8 @@ async function device(browser, name) {
     await Bd.waitForFunction(() => window.Sync && window.Sync.status().lastSync > 0, { timeout: 60000 }).catch(() => {});
     await sleep(800);
     const libB = await libTitles(Bd);
+    const toastsB = await Bd.evaluate(() => window.__toasts);
+    check('B shows progress while the books come in', toastsB.some((t) => /^Getting books from your other devices… 1 of 2/.test(t)) && toastsB.some((t) => /^Added 2 books from your other devices/.test(t)), toastsB.filter((t) => /book/.test(t)));
     check('signing in on B brings A\'s books', libB.length === 3 && libB.some((t) => /Anticancer/.test(t)) && libB.some((t) => /Sample Notes/.test(t)), libB);
     const savedB = await savedTitles(Bd);
     // saved-list labels may start with the card's number ("6. …")
@@ -278,6 +298,40 @@ async function device(browser, name) {
     const nav = await switchOn(Bd);
     await sleep(1500);
     check('switching on again needs no new sign-in', !nav && hits.filter((h) => h === 'GET /auth/v1/authorize').length === authBefore && (await status(Bd)).on);
+    await back(Bd);
+
+    /* ---------- token renewal: one at a time, shared between tabs ---------- */
+    await tap(A, cur + ' .foot .icon-btn:nth-last-child(3)');   // something to send
+    const tab2 = await A.browserContext().newPage();
+    await tab2.goto(ORIGIN + '/', { waitUntil: 'networkidle0' });
+    await sleep(1500);
+    validFrom = tokenN + 1;                           // every token in use now expires: both tabs must renew
+    const renewalsBefore = hits.filter((h) => h === 'POST /auth/v1/token').length;
+    await Promise.all([
+      syncNow(A), syncNow(tab2),
+      A.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); })
+    ]);
+    await sleep(1500);
+    await A.evaluate(() => { delete document.hidden; });
+    const s1 = await status(A), s2 = await status(tab2);
+    const renewals = hits.filter((h) => h === 'POST /auth/v1/token').length - renewalsBefore;
+    check('renewing tokens at the same moment (leaving the app, a second tab) keeps the device signed in',
+      renewals >= 1 && reused.length === 0 && s1.signedIn && s2.signedIn && !s1.error && !s2.error, { renewals, reused, s1: s1.error, s2: s2.error });
+    await tab2.close();
+
+    /* ---------- a book from an older version, without its original ---------- */
+    await Bd.evaluate(() => new Promise((res) => {
+      const rq = indexedDB.open('vanchan');
+      rq.onsuccess = () => {
+        const t = rq.result.transaction('books', 'readwrite'), st = t.objectStore('books');
+        st.put({ id: 'old1', title: 'Old EPUB', kind: 'epub', added: 1, count: 0 });
+        t.oncomplete = () => res();
+      };
+    }));
+    await Bd.reload({ waitUntil: 'networkidle0' }); await sleep(1500);
+    await tap(Bd, '#btnAa');
+    const oldText = await text(Bd, '#syncStatus');
+    check('Settings says which books can\'t sync', /1 book was added by an older version and can't sync/.test(oldText), oldText);
     await back(Bd);
 
     /* ---------- sign out ---------- */

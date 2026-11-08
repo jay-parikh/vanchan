@@ -52,7 +52,8 @@
 
   function debounce(fn, ms) { let t; return function () { clearTimeout(t); t = setTimeout(fn, ms); }; }
 
-  function toast(text, action, onAction) {
+  // ms: how long it stays (default 2.6 s, 5 s with an action)
+  function toast(text, action, onAction, ms) {
     const t = $('toast');
     $('toastText').textContent = text;
     const b = $('toastAction');
@@ -61,7 +62,7 @@
     b.onclick = () => { t.hidden = true; if (onAction) onAction(); };
     t.hidden = false;
     clearTimeout(toast.timer);
-    toast.timer = setTimeout(() => { t.hidden = true; }, action ? 5000 : 2600);
+    toast.timer = setTimeout(() => { t.hidden = true; }, ms || (action ? 5000 : 2600));
   }
 
   function cardLabel(c) {
@@ -1348,8 +1349,13 @@
       if (!c || id === currentId()) return;
       toast('Continue from ' + name + ': ' + cardLabel(c), 'Continue', () => jumpTo(id));
     },
-    gettingBooks: (n) => toast('Getting ' + n + (n === 1 ? ' book' : ' books') + ' from your other devices…'),
-    async gotBooks() { await loadFeed(currentId()); if (!S.busy) render(); },
+    // stays up while the books come in, so an empty screen never looks stuck
+    gettingBook: (i, n, title) => toast('Getting books from your other devices… ' + i + ' of ' + n + ' · ' + title, null, null, 120000),
+    async gotBooks(n) {
+      await loadFeed(currentId());
+      if (!S.busy) render();
+      toast('Added ' + n + (n === 1 ? ' book' : ' books') + ' from your other devices');
+    },
     getKv: (k, d) => DB.getKv(k, d),
     setKv: (k, v) => DB.setKv(k, v),
     onStatus: () => renderSync(),
@@ -1366,6 +1372,7 @@
     else if (!st.on) text = 'Keep your books, saved cards and reading place the same on all your devices. Uses your Google account.';
     else if (st.busy) text = 'Syncing…';
     else text = 'Signed in as ' + (st.email || 'your Google account') + (st.lastSync ? ' · synced ' + ago(st.lastSync) : '');
+    if (st.on && st.cantSync) text += ' · ' + st.cantSync + (st.cantSync === 1 ? ' book was' : ' books were') + ' added by an older version and can\'t sync: add ' + (st.cantSync === 1 ? 'it' : 'them') + ' again on this device.';
     $('syncStatus').textContent = text;
   }
 
