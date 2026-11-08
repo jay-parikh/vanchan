@@ -69,6 +69,7 @@ app.
    - Site URL: `https://vanchan.netlify.app`
    - Redirect URLs (add each):
      - `https://vanchan.netlify.app`
+     - `https://vanchan.netlify.app/**`
      - `https://*--vanchan.netlify.app/**` (free draft deploys for testing)
      - `http://localhost:8766` (only if testing on the server)
 

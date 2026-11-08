@@ -6,4 +6,4 @@
  *
  *   window.VANCHAN_SYNC = { url: 'https://<project-ref>.supabase.co', key: 'sb_publishable_…' };
  */
-window.VANCHAN_SYNC = null;
+window.VANCHAN_SYNC = { url: 'https://aqbeyhtxyrzpnlslespi.supabase.co', key: 'sb_publishable_vxIPESj8F93FqzUVvZ4cBw_IKiBDCwh' };

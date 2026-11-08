@@ -56,6 +56,8 @@ function serve() {
   const errors = [], dialogs = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error' && !/favicon|clipboard|Failed to load resource/i.test(m.text())) errors.push(m.text()); });
+  const supabaseCalls = [];
+  page.on('request', (r) => { if (/supabase\.co/.test(r.url())) supabaseCalls.push(r.method() + ' ' + r.url()); });
   page.on('dialog', async (d) => { dialogs.push(d.message()); if (d.type() === 'prompt') await d.accept('Renamed book'); else await d.accept(); });
   await page.setViewport({ width: 390, height: 800, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   const URL = 'http://localhost:' + PORT + '/';
@@ -246,7 +248,8 @@ function serve() {
     const sansOk = await page.evaluate(() => document.fonts.check('700 20px "Noto Sans Gujarati"', 'અ'));
     check('Sans Gujarati font loaded', sansOk);
     await shot('07-settings-dark');
-    check('no sync switch while sync is not set up (config.js is null)', await page.evaluate(() => document.getElementById('syncField').hidden && !window.Sync.available()));
+    const sw = await page.evaluate(() => ({ shown: !document.getElementById('syncField').hidden, on: document.getElementById('syncOn').checked, available: window.Sync.available() }));
+    check('sync switch shown in Settings and off by default', sw.shown && !sw.on && sw.available, sw);
     await tap('.seg[data-setting="order"] button[data-v="book"]');
     await back();
     check('settings → book order', inBookOrder(await footState()));
@@ -395,6 +398,7 @@ function serve() {
     await page.reload({ waitUntil: 'networkidle0' }); await sleep(3000);
     check('fixed books are not read again on the next start', !/Text updated/.test(await page.evaluate(() => document.getElementById('toastText').textContent)));
 
+    check('with sync off, not one request went to Supabase', supabaseCalls.length === 0, supabaseCalls.slice(0, 3));
     check('no script errors', errors.length === 0, errors.slice(0, 5));
   } catch (e) {
     check('test run finished', false, e.message);
