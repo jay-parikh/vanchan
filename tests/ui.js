@@ -246,6 +246,7 @@ function serve() {
     const sansOk = await page.evaluate(() => document.fonts.check('700 20px "Noto Sans Gujarati"', 'અ'));
     check('Sans Gujarati font loaded', sansOk);
     await shot('07-settings-dark');
+    check('no sync switch while sync is not set up (config.js is null)', await page.evaluate(() => document.getElementById('syncField').hidden && !window.Sync.available()));
     await tap('.seg[data-setting="order"] button[data-v="book"]');
     await back();
     check('settings → book order', inBookOrder(await footState()));

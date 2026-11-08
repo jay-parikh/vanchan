@@ -79,6 +79,23 @@ Random or book order · contents index · search · page number and original pag
 hide a card · text size, serif or sans Gujarati font, light / sepia / dark
 theme · position remembered per book · arrow keys and mouse wheel on desktop.
 
+## Sync across devices (optional)
+
+Off by default; while off the app never contacts any server. In **Aa →
+Sync across devices** the reader switches it on and signs in with Google.
+Every device with sync on then keeps the same books (the original files),
+read / saved / hidden cards, and the place in each book. When another device
+read further, a "Continue from …" message offers to go there.
+
+- Data lives in your own Supabase project (`js/config.js` holds its URL and
+  publishable key; `null` there hides the switch). One-time setup:
+  `../setup/README.md`.
+- Switching off stops sync on that device and keeps everything on it. Sign
+  out also forgets the Google account there.
+- With sync on, deleting a book deletes it on all devices.
+- Text size, font and theme stay per device.
+- Netlify is not involved: sync uses no Netlify credits.
+
 ## Search
 
 The magnifier in the top bar searches card titles and text. A card is found
@@ -95,7 +112,7 @@ in `js/app.js`, so books already added are read again.
 Build with `../build.sh`: it runs both test suites in `../tests` and makes
 `vanchan.zip` only when they pass.
 
-When you change any file, also change `VERSION` in `sw.js` (currently `vanchan-v9`).
+When you change any file, also change `VERSION` in `sw.js` (currently `vanchan-v10`).
 The app looks for a new version each time it is opened or brought back to the
 screen, downloads it, and reloads itself into it ("App updated"). Books,
 reading progress and settings are kept. There is no need to remove and add

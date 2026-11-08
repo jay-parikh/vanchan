@@ -3,7 +3,7 @@
  * cache. A new VERSION makes the browser install a fresh copy; the app checks
  * for one each time it is opened or brought back, and reloads into it.
  */
-const VERSION = 'vanchan-v9';
+const VERSION = 'vanchan-v10';
 const FILES = [
   './',
   'index.html',
@@ -15,6 +15,8 @@ const FILES = [
   'js/mdbook.js',
   'js/cards.js',
   'js/db.js',
+  'js/config.js',
+  'js/sync.js',
   'js/app.js',
   'vendor/pdf.min.js',
   'vendor/pdf.worker.min.js',

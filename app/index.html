@@ -124,6 +124,14 @@
             <button data-v="book">Book order</button>
           </div>
         </div>
+        <div class="field" id="syncField" hidden>
+          <label class="switch-row" for="syncOn">
+            <span class="label">Sync across devices</span>
+            <input type="checkbox" id="syncOn" class="switch" role="switch">
+          </label>
+          <p class="fine" id="syncStatus"></p>
+          <button class="link" id="syncOut" hidden>Sign out</button>
+        </div>
         <div class="field" id="installRow" hidden>
           <button class="secondary wide" id="btnInstall">Install app</button>
         </div>
@@ -218,6 +226,8 @@
   <script src="js/mdbook.js"></script>
   <script src="js/cards.js"></script>
   <script src="js/db.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/sync.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

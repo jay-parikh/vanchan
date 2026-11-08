@@ -176,7 +176,7 @@
 
   function markCurrentRead() {
     const id = currentId();
-    if (id && Date.now() - S.shownAt > 1500 && !S.read.has(id)) { S.read.add(id); saveSets(); }
+    if (id && Date.now() - S.shownAt > 1500 && !S.read.has(id)) { S.read.add(id); saveSets(); Sync.read(id); }
   }
 
   /* ---------- card rendering ---------- */
@@ -403,6 +403,7 @@
     if (S.hl && S.order[S.pos] !== S.hl.id) S.hl = null;
     saveFeed();
     render();
+    if (currentId()) Sync.pos(currentId());
   }
 
   function setupGestures() {
@@ -483,6 +484,7 @@
     const i = S.marks.indexOf(id);
     if (i >= 0) { S.marks.splice(i, 1); toast('Removed from saved'); }
     else { S.marks.unshift(id); toast('Saved'); }
+    Sync.mark(id, i < 0);
     saveSets();
     refreshFoot(id);
   }
@@ -526,12 +528,13 @@
   function hideCard(id) {
     S.hidden.add(id);
     saveSets();
+    Sync.hide(id, true);
     const at = S.order.indexOf(id);
     if (at >= 0) { S.order.splice(at, 1); if (at < S.pos) S.pos--; }
     saveFeedNow();
     render();
     toast('Card hidden', 'Undo', () => {
-      S.hidden.delete(id); saveSets();
+      S.hidden.delete(id); saveSets(); Sync.hide(id, false);
       S.order.splice(Math.min(S.pos, S.order.length), 0, id);
       saveFeedNow(); render();
     });
@@ -600,6 +603,7 @@
     S.settings.order = 'book'; saveSettings();
     await loadFeed(id);
     render();
+    Sync.pos(id);
   }
 
   async function jumpTo(id) {
@@ -607,10 +611,11 @@
     if (!c) return;
     markCurrentRead();
     if (S.scope !== 'all' && S.scope !== c.b) { S.scope = c.b; store.set('scope', S.scope); await loadFeed(); }
-    if (S.hidden.has(id)) { S.hidden.delete(id); saveSets(); }
+    if (S.hidden.has(id)) { S.hidden.delete(id); saveSets(); Sync.hide(id, false); }
     let i = S.order.indexOf(id);
     if (i < 0) { S.order.splice(S.pos, 0, id); i = S.pos; }
     S.pos = i; saveFeedNow(); render();
+    Sync.pos(id);
     if (S.hl && S.hl.id === id) {
       // bring the first match into view
       const card = S.els.cur, body = card && card.querySelector('.body'), m = body && body.querySelector('mark');
@@ -777,7 +782,7 @@
     if (S.sheets.indexOf(s) >= 0) return;
     if (id === 'sheetLib') renderLibrary();
     if (id === 'sheetSaved') renderSaved();
-    if (id === 'sheetAa') renderStorageNote();
+    if (id === 'sheetAa') { renderStorageNote(); renderSync(); }
     s.hidden = false;
     S.sheets.push(s);
     // the Android back button closes the sheet
@@ -836,7 +841,7 @@
     });
     $('btnResetRead').onclick = () => {
       if (!confirm('Mark every card as unread?')) return;
-      S.read.clear(); saveSets(); toast('All cards are unread again');
+      S.read.clear(); saveSets(); Sync.resetRead(); toast('All cards are unread again');
     };
     matchMedia('(prefers-color-scheme: dark)').addEventListener && matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applySettings);
   }
@@ -897,13 +902,26 @@
     const name = prompt('Book name', b.title);
     if (!name || !name.trim()) return;
     b.title = name.trim();
+    b.titleAt = Date.now();
     await DB.put('books', b);
+    Sync.bookChanged(b);
     renderLibrary(); render();
   }
 
   async function deleteBook(id) {
     const b = S.bookById[id];
-    if (!confirm('Delete "' + b.title + '" and its ' + b.count + ' cards from this device?')) return;
+    // with sync on, a book deleted only here would come back from the other devices
+    const everywhere = Sync.isOn() && b.key;
+    if (!confirm('Delete "' + b.title + '" and its ' + b.count + ' cards from ' + (everywhere ? 'all your devices?' : 'this device?'))) return;
+    await dropBook(id);
+    if (everywhere) Sync.bookDeleted(b);
+    await loadFeed();
+    renderLibrary(); render();
+    toast('Book deleted');
+  }
+
+  // removes a book and its cards from this device (no questions, no sync)
+  async function dropBook(id) {
     await DB.deleteBook(id);
     if (V.docs[id]) { V.docs[id].then((d) => d.destroy()).catch(() => {}); delete V.docs[id]; }
     S.books = S.books.filter((x) => x.id !== id);
@@ -913,9 +931,6 @@
     S.marks = S.marks.filter((m) => S.cards[m]);
     saveSets();
     if (S.scope === id) { S.scope = 'all'; store.set('scope', 'all'); }
-    await loadFeed();
-    renderLibrary(); render();
-    toast('Book deleted');
   }
 
   function renderSaved() {
@@ -945,7 +960,8 @@
     const n = S.books.length;
     $('storageNote').textContent = DB.memoryOnly()
       ? 'This browser is not letting the app store books (private mode?). Books will be gone when you close the page.'
-      : n + (n === 1 ? ' book' : ' books') + ' stored on this device. Nothing is uploaded.';
+      : n + (n === 1 ? ' book' : ' books') + ' stored on this device. ' +
+        (Sync.isOn() ? 'Sync keeps a copy in your own Supabase account.' : 'Nothing is uploaded.');
   }
 
   /* ---------- page viewer ---------- */
@@ -1118,6 +1134,26 @@
   const PARSER = 2;
   const FILE_TYPES = { pdf: 'application/pdf', epub: 'application/epub+zip', md: 'text/markdown' };
 
+  // Saves a newly read book (record, cards, original file) and adds it to the
+  // app. Used for books added here and books arriving from other devices.
+  async function storeBook(info, cards, original) {
+    const id = 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const book = { id, title: info.title, author: info.author || '', kind: info.kind, added: info.added || Date.now(), cover: info.cover || '',
+      count: cards.length, file: info.file || '', size: info.size || original.byteLength, parser: PARSER };
+    if (info.titleAt) book.titleAt = info.titleAt;
+    if (info.labels && info.labels.some(Boolean)) book.labels = info.labels;
+    // the same file on every device has the same key: that is how sync knows a book
+    try { book.key = info.key || await Sync.sha256(original); } catch (e) { /* no crypto.subtle (not https) */ }
+    // the original is kept to show PDF pages, and to re-read the book when the app learns to read it better
+    try { await DB.put('files', { id, data: original, type: FILE_TYPES[info.kind] }); book.hasFile = true; }
+    catch (e) { /* storage full: cards still work, pages just can't be opened */ }
+    const recs = cards.map((c) => Object.assign({ id: id + ':' + c.n, b: id }, c));
+    await DB.addBook(book, recs);
+    S.books.push(book); S.bookById[id] = book; S.byBook[id] = recs;
+    recs.forEach((c) => { S.cards[c.id] = c; });
+    return book;
+  }
+
   // Reads a book file into cards. Throws a message for the reader when the
   // file can't be used. progress(label) gives a page/chapter callback, or null.
   async function parseBook(kind, data, progress, withCover) {
@@ -1189,17 +1225,9 @@
         const title = goodTitle(r.title) ? r.title : fileTitle(file.name);
         $('impBar').style.width = '96%';
         $('impStatus').textContent = 'Saving ' + cards.length + ' cards…';
-        const id = 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-        const book = { id, title, author: r.author || '', kind, added: Date.now(), cover, count: cards.length, file: file.name, size: file.size, parser: PARSER };
-        if (r.labels && r.labels.some(Boolean)) book.labels = r.labels;
-        // the original is kept to show PDF pages, and to re-read the book when the app learns to read it better
-        try { await DB.put('files', { id, data: original, type: FILE_TYPES[kind] }); book.hasFile = true; }
-        catch (e) { /* storage full: cards still work, pages just can't be opened */ }
-        const recs = cards.map((c) => Object.assign({ id: id + ':' + c.n, b: id }, c));
-        await DB.addBook(book, recs);
-        S.books.push(book); S.bookById[id] = book; S.byBook[id] = recs;
-        recs.forEach((c) => { S.cards[c.id] = c; });
-        lastId = id; added++;
+        const book = await storeBook({ title, author: r.author || '', kind, cover, file: file.name, size: file.size, labels: r.labels }, cards, original);
+        Sync.bookAdded(book);
+        lastId = book.id; added++;
         toast('Added "' + title + '" · ' + cards.length + ' cards');
       } catch (e) {
         modal.hidden = true;
@@ -1253,7 +1281,108 @@
 
     if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) setupUpdates();
     if (store.get('updated', false)) { store.set('updated', false); toast('App updated'); }
+    setupSync();
     setTimeout(upgradeBooks, 1500);
+  }
+
+  /* ---------- sync across devices (optional) ---------- */
+
+  function cardIdsToNs(bookId, set) {
+    const pre = bookId + ':', out = [];
+    set.forEach((id) => { if (id.indexOf(pre) === 0) out.push(id.slice(pre.length)); });
+    return out;
+  }
+
+  // what sync.js needs from the app; see the list above Sync.init
+  const syncAdapter = {
+    books: () => S.books,
+    bookOfCard: (id) => S.cards[id] && S.bookById[S.cards[id].b],
+    progressOfBook: (bookId) => ({ read: cardIdsToNs(bookId, S.read), marks: cardIdsToNs(bookId, S.marks), hidden: cardIdsToNs(bookId, S.hidden) }),
+    applyProgress(bookId, p) {
+      const pre = bookId + ':', want = (ns) => new Set(ns.map((n) => pre + n).filter((id) => S.cards[id]));
+      const read = want(p.read), marks = want(p.marks), hidden = want(p.hidden);
+      let changed = false;
+      const sync = (set) => (ids) => {
+        set.forEach((id) => { if (id.indexOf(pre) === 0 && !ids.has(id)) { set.delete(id); changed = true; } });
+        ids.forEach((id) => { if (!set.has(id)) { set.add(id); changed = true; } });
+      };
+      sync(S.read)(read);
+      sync(S.hidden)(hidden);
+      const keep = S.marks.filter((id) => id.indexOf(pre) !== 0 || marks.has(id));
+      const add = Array.from(marks).filter((id) => S.marks.indexOf(id) < 0);
+      if (add.length || keep.length !== S.marks.length) { S.marks = add.concat(keep); changed = true; }
+      return changed;
+    },
+    async progressChanged() {
+      saveSets();
+      const keep = currentId();
+      await loadFeed(keep);
+      if (!S.busy) render();
+    },
+    getFile: (id) => DB.getFile(id),
+    saveBook: (b) => DB.put('books', b),
+    async addRemoteBook(row, data) {
+      try {
+        const res = await parseBook(row.kind, data.slice(0), null, true);
+        await storeBook({ title: row.title, titleAt: row.title_at, kind: row.kind, cover: res.cover, file: row.file_name, size: row.size,
+          added: row.added, labels: res.r.labels, key: row.book_key, author: res.r.author }, res.cards, data);
+      } catch (e) { /* a file this version can't read: skip it */ }
+    },
+    async removeBook(id) {
+      const b = S.bookById[id];
+      if (!b) return;
+      await dropBook(id);
+      await loadFeed();
+      render();
+      toast('"' + b.title + '" was deleted on another device');
+    },
+    async renameBook(id, title, at) {
+      const b = S.bookById[id];
+      if (!b) return;
+      b.title = title; b.titleAt = at;
+      await DB.put('books', b);
+      render();
+    },
+    offerContinue(bookId, n, name) {
+      const id = bookId + ':' + n, c = S.cards[id];
+      if (!c || id === currentId()) return;
+      toast('Continue from ' + name + ': ' + cardLabel(c), 'Continue', () => jumpTo(id));
+    },
+    gettingBooks: (n) => toast('Getting ' + n + (n === 1 ? ' book' : ' books') + ' from your other devices…'),
+    async gotBooks() { await loadFeed(currentId()); if (!S.busy) render(); },
+    getKv: (k, d) => DB.getKv(k, d),
+    setKv: (k, v) => DB.setKv(k, v),
+    onStatus: () => renderSync(),
+    toast: (t) => toast(t)
+  };
+
+  function renderSync() {
+    if (!Sync.available()) return;
+    const st = Sync.status();
+    $('syncOn').checked = st.on;
+    $('syncOut').hidden = !st.signedIn;
+    let text;
+    if (st.error) text = st.error;
+    else if (!st.on) text = 'Keep your books, saved cards and reading place the same on all your devices. Uses your Google account.';
+    else if (st.busy) text = 'Syncing…';
+    else text = 'Signed in as ' + (st.email || 'your Google account') + (st.lastSync ? ' · synced ' + ago(st.lastSync) : '');
+    $('syncStatus').textContent = text;
+  }
+
+  function ago(t) {
+    const s = Math.round((Date.now() - t) / 1000);
+    return s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + ' min ago' : new Date(t).toLocaleString();
+  }
+
+  function setupSync() {
+    if (!Sync.available()) return;
+    $('syncField').hidden = false;
+    $('syncOn').onchange = (e) => { Sync.setOn(e.target.checked); renderSync(); };
+    $('syncOut').onclick = () => {
+      if (!confirm('Sign out of sync on this device? Your books stay here.')) return;
+      Sync.signOut().then(renderSync);
+    };
+    Sync.init(syncAdapter).then(renderSync, () => {});
   }
 
   /* ---------- better text for books already added ---------- */
@@ -1308,9 +1437,11 @@
       });
     }
     const move = (id) => map[id] || id;
+    const moveN = (n) => { const to = map[b.id + ':' + n]; return to ? to.slice(to.lastIndexOf(':') + 1) : String(n); };
 
     const recs = cards.map((c) => Object.assign({ id: newId(c.n), b: b.id }, c));
     b.count = recs.length; b.parser = PARSER; delete b.tried;
+    Sync.remap(b, moveN);
     if (res.r.labels && res.r.labels.some(Boolean)) b.labels = res.r.labels; else delete b.labels;
     await DB.replaceCards(b, recs);
 
