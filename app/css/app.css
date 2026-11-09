@@ -324,6 +324,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .ink-layer { position: absolute; left: 0; top: 0; pointer-events: none; mix-blend-mode: multiply; }
 :root[data-theme="dark"] .ink-layer { mix-blend-mode: normal; }
 .ink-layer.live { pointer-events: auto; cursor: crosshair; }
+.ink-layer.live.scrolling, #vInk.live.scrolling { pointer-events: none; }   /* the Scroll tool: touches reach the page under it */
 .card.inking .body { overscroll-behavior: contain; }
 
 /* the pen bar: Pen · Highlight · Eraser · Undo · Done */
@@ -332,7 +333,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   padding: 6px 8px calc(6px + var(--safe-b, 0px)); border-top: 1px solid var(--line); background: var(--card);
 }
 .pen-tool {
-  width: 58px; height: 52px; border: 0; border-radius: 10px; background: none; color: var(--ink);
+  width: 52px; height: 52px; border: 0; border-radius: 10px; background: none; color: var(--ink);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px;
 }
 .pen-tool svg { width: 22px; height: 22px; }
@@ -500,6 +501,9 @@ button.page-chip { color: var(--accent); background: var(--accent-soft); }
 .modal-box .secondary { margin-top: 8px; }
 
 /* ---------- toast ---------- */
+/* a message never blocks swiping or scrolling under it; only its button takes taps */
+.toast { pointer-events: none; }
+.toast button { pointer-events: auto; }
 .toast {
   position: fixed; left: 50%; bottom: calc(86px + var(--safe-b)); transform: translateX(-50%); z-index: 40;
   background: var(--ink); color: var(--card); border-radius: 12px; padding: 10px 10px 10px 16px;
@@ -536,3 +540,35 @@ button.page-chip { color: var(--accent); background: var(--accent-soft); }
   .side-actions button { flex: 1; height: 40px; }
 }
 @media (min-width: 1300px) { :root { --side-l: 280px; --side-r: 300px; } }
+
+/* folding the side panels into slim rails (wide screens) */
+.side-rail, .side-fold { display: none; }
+@media (min-width: 1150px) {
+  #feed.fold-l { --side-l: 44px; }
+  #feed.fold-r { --side-r: 44px; }
+  #feed.wide.fold-l #stack, #feed.wide.fold-r #stack { max-width: 860px; }
+  .side-open { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+  .side-l .side-open { gap: 0; }
+  .side-head { display: flex; align-items: center; gap: 8px; }
+  .side-head span { flex: 1; }
+  .side-r .side-head span { text-align: right; }
+  .side-fold {
+    display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: none;
+    border: 0; border-radius: 9px; background: var(--chip); color: var(--ink); font-size: 18px; line-height: 1;
+  }
+  .side.folded:not([hidden]) { padding: 0; overflow: hidden; }
+  .side.folded .side-open { display: none; }
+  .side.folded .side-rail {
+    display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; height: 100%; padding: 14px 0;
+    border: 0; background: none; color: var(--ink); cursor: pointer; border-radius: 16px;
+  }
+  .side-rail:active { background: var(--chip); }
+  .side-rail svg { width: 22px; height: 22px; }
+  .rail-arrow { font-size: 18px; color: var(--muted); line-height: 1; }
+  .rail-label { writing-mode: vertical-rl; font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .rail-count {
+    min-width: 20px; height: 20px; padding: 0 5px; box-sizing: border-box; border-radius: 10px;
+    background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+}

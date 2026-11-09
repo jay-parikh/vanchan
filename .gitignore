@@ -13,3 +13,5 @@ tests/.work-marks/
 tests/marks.log
 tests/.work-upgrade/
 tests/upgrade.log
+tests/.work-touch/
+tests/touch.log

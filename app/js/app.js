@@ -26,6 +26,7 @@
     marker: svg('<path d="m9 15 6-6 3 3-6 6H9v-3Z"/><path d="M4 21h8"/>'),
     eraser: svg('<path d="m7 21-4-4L14 6l6 6-9 9H7Z"/><path d="M11 21h9"/>'),
     undo: svg('<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>'),
+    scroll: svg('<path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/>'),
     note: svg('<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>'),
     shuffle: svg('<path d="M4 7h3c4 0 6 10 10 10h3M4 17h3c1.6 0 2.8-1.6 3.9-3.6M13.1 9.6C14.2 8.1 15.3 7 17 7h3"/><path d="m18 4 3 3-3 3M18 14l3 3-3 3"/>')
   };
@@ -430,6 +431,7 @@
     S.inking = { id, layout, tool: { t: 'p', c: penColor() }, mark: ink || null };
     hideBars();
     render();
+    penHint();
   }
 
   function startCardPen(card) {
@@ -454,6 +456,15 @@
     });
     S.inking.surface = surf;
     updatePenBar();
+  }
+
+  // on touch screens: how to move the page while the pen is on (shown the first few times)
+  function penHint() {
+    const touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+    const n = store.get('penHints', 0);
+    if (!touch || n >= 3) return;
+    store.set('penHints', n + 1);
+    toast('One finger draws · scroll with two fingers, or tap Scroll', null, null, 4500);
   }
 
   function exitPen() {
@@ -494,6 +505,7 @@
     }));
     bar.appendChild(tool('h', ICON.marker, 'Highlight', () => { state.tool = { t: 'h' }; pop.hidden = true; updatePenBar(); }));
     bar.appendChild(tool('e', ICON.eraser, 'Eraser', () => { state.tool = { t: 'e' }; pop.hidden = true; updatePenBar(); }));
+    bar.appendChild(tool('s', ICON.scroll, 'Scroll', () => { state.tool = { t: 's' }; pop.hidden = true; updatePenBar(); }));
     bar.appendChild(tool('u', ICON.undo, 'Undo', () => { if (state.surface) state.surface.undo(); updatePenBar(); }));
     const d = el('button', 'primary pen-done', 'Done');
     d.onclick = (e) => { e.stopPropagation(); done(); };
@@ -513,6 +525,10 @@
       });
       bar.querySelectorAll('.pen-color').forEach((d) => d.classList.toggle('on', d.dataset.c === penColor()));
     });
+    const cardLayer = S.inking && S.els.cur && S.els.cur.querySelector('.ink-layer.live');
+    if (cardLayer) cardLayer.classList.toggle('scrolling', S.inking.tool.t === 's');
+    const pageLayer = $('vInk');
+    if (pageLayer) pageLayer.classList.toggle('scrolling', !!(V.pen && V.pen.tool.t === 's'));
   }
 
   /* ---------- selecting words ---------- */
@@ -749,6 +765,7 @@
         strokes: m ? m.strokes : [],
         size: () => [w, h],
         tool: () => V.pen.tool,
+        onScroll: (dy, dx) => { const b = $('vBody'); b.scrollTop += dy; b.scrollLeft += dx; },
         onChange: (strokes) => {
           let pm = pageMark(V.book, V.page);
           if (!strokes.length) { if (pm) removeMark(pm); return; }
@@ -781,6 +798,7 @@
     $('vPen').classList.toggle('on', !!on);
     $('vPenBar').hidden = !on;
     paintPage();
+    if (on) penHint();
   }
 
   /* ---------- after a book is read again: marks follow their words ---------- */
@@ -866,6 +884,9 @@
   function render() {
     // drawing ends when its card is no longer the one shown (another book, a jump)
     if (S.inking && S.order[S.pos] !== S.inking.id) { if (S.inking.surface) S.inking.surface.destroy(); S.inking = null; }
+    // the same card drawn again (pen on/off, a highlight, a note): keep its place in the text
+    const was = S.els.cur && S.els.cur.dataset.id, wasBody = S.els.cur && S.els.cur.querySelector('.body');
+    const keepTop = was && was === S.order[S.pos] && wasBody ? wasBody.scrollTop : null;
     const stack = $('stack');
     stack.textContent = '';
     S.els = { prev: null, cur: null, next: null };
@@ -888,6 +909,7 @@
     hideBars();
     renderSides();     // first: the side panels change the card's width
     [S.els.prev, S.els.cur, S.els.next].forEach((c) => { if (c) fitLock(c); });
+    if (keepTop !== null && S.els.cur) { const b = S.els.cur.querySelector('.body'); if (b) b.scrollTop = keepTop; }
     if (S.inking && S.els.cur && S.els.cur.dataset.id === S.inking.id) startCardPen(S.els.cur);
   }
 
@@ -1014,7 +1036,7 @@
     // mouse wheel / trackpad: scroll the card first, then move between cards
     let acc = 0, lock = 0;
     stack.addEventListener('wheel', (ev) => {
-      if (!S.els.cur || S.busy) return;
+      if (!S.els.cur || S.busy || S.inking) return;   // while drawing, the wheel only scrolls the card
       const body = S.els.cur.querySelector('.body');
       const top = !body || body.scrollTop <= 0;
       const bottom = !body || body.scrollTop + body.clientHeight >= body.scrollHeight - 2;
@@ -1175,6 +1197,12 @@
     left.hidden = right.hidden = !show;
     $('feed').classList.toggle('wide', show);
     if (!show) { sideBook = null; return; }
+    // each panel folds into a slim rail; the choice is kept on this device
+    const openL = store.get('sideL', true), openR = store.get('sideR', true);
+    $('feed').classList.toggle('fold-l', !openL);
+    $('feed').classList.toggle('fold-r', !openR);
+    left.classList.toggle('folded', !openL);
+    right.classList.toggle('folded', !openR);
     // contents: built once per book, then only the current entry moves
     const list = left.querySelector('ul');
     if (sideBook !== c.b) {
@@ -1221,6 +1249,10 @@
     }
     if (mine.some((m) => m.type === 'ink-card')) box.appendChild(el('p', 'side-hint', 'Pen marks on this card'));
     if (!box.childNodes.length) box.appendChild(el('p', 'side-hint', 'Select words on the card to highlight them or add a note.'));
+    // the folded rail shows how many marks this card has
+    const count = Object.keys(seen).length + mine.filter((m) => m.type === 'text' && !m.grp).length + (cn ? 1 : 0) + (mine.some((m) => m.type === 'ink-card') ? 1 : 0);
+    $('railCount').textContent = count;
+    $('railCount').hidden = !count;
     $('sideNote').disabled = $('sidePen').disabled = c.kind === 'index' || !!S.inking;
   }
 
@@ -1962,6 +1994,9 @@
     setupSearch();
     setupMarking();
     $('sideNote').onclick = () => { const id = currentId(); if (id) openNote({ cardId: id }); };
+    const fold = (key) => () => { store.set(key, !store.get(key, true)); render(); };
+    $('railToc').onclick = $('foldToc').onclick = fold('sideL');
+    $('railMarks').onclick = $('foldMarks').onclick = fold('sideR');
     $('sidePen').onclick = () => { const id = currentId(); if (id) enterPen(id); };
     if (WIDE.addEventListener) WIDE.addEventListener('change', () => render());
     // a turned phone or a resized window: fit cards with pen marks again

@@ -37,17 +37,23 @@
 
     <main id="feed">
       <aside class="side side-l" id="sideToc" aria-label="Contents" hidden>
-        <div class="side-head">Contents</div>
-        <div class="side-title" lang="gu"></div>
-        <ul class="toc"></ul>
+        <button class="side-rail" id="railToc" aria-label="Open contents"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg><span class="rail-arrow">»</span><span class="rail-label">Contents</span></button>
+        <div class="side-open">
+          <div class="side-head"><span>Contents</span><button class="side-fold" id="foldToc" aria-label="Fold contents">«</button></div>
+          <div class="side-title" lang="gu"></div>
+          <ul class="toc"></ul>
+        </div>
       </aside>
       <div id="stack" aria-live="polite"></div>
       <aside class="side side-r" id="sideMarks" aria-label="This card's highlights and notes" hidden>
-        <div class="side-head">This card</div>
-        <div class="side-list"></div>
-        <div class="side-actions">
-          <button class="secondary" id="sideNote">Note</button>
-          <button class="secondary" id="sidePen">Pen</button>
+        <button class="side-rail" id="railMarks" aria-label="Open this card's highlights and notes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/></svg><span class="rail-count" id="railCount" hidden></span><span class="rail-arrow">«</span><span class="rail-label">This card</span></button>
+        <div class="side-open">
+          <div class="side-head"><button class="side-fold" id="foldMarks" aria-label="Fold this card's highlights and notes">»</button><span>This card</span></div>
+          <div class="side-list"></div>
+          <div class="side-actions">
+            <button class="secondary" id="sideNote">Note</button>
+            <button class="secondary" id="sidePen">Pen</button>
+          </div>
         </div>
       </aside>
       <div class="nav-btns" id="navBtns">

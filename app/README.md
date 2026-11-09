@@ -113,7 +113,11 @@ read further, a "Continue from …" message offers to go there.
 - **Saved → Highlights & notes:** everything you marked, by book. "Send to
   Notes…" shares a book's highlights and notes as text (Apple Notes, Mail…).
 - **Wide screens** (desktop, iPad landscape): the book's contents on the left
-  and this card's highlights and notes on the right.
+  and this card's highlights and notes on the right. Each folds into a slim
+  rail (« »), giving the card up to 860px; the choice is kept per device.
+- **Moving around while the pen is on:** two fingers scroll, or tap **Scroll**
+  and use one finger. With an Apple Pencil, the pencil draws and a finger
+  scrolls.
 - **Printed index:** a book's own index page (અનુક્રમણિકા) becomes a card in
   book order; tap an entry to open that topic.
 - With sync on, all of this syncs (needs the marks table: `../setup/README.md`).
@@ -134,7 +138,7 @@ in `js/app.js`, so books already added are read again.
 Build with `../build.sh`: it runs both test suites in `../tests` and makes
 `vanchan.zip` only when they pass.
 
-When you change any file, also change `VERSION` in `sw.js` (currently `vanchan-v12`).
+When you change any file, also change `VERSION` in `sw.js` (currently `vanchan-v13`).
 The app looks for a new version each time it is opened or brought back to the
 screen, downloads it, and reloads itself into it ("App updated"). Books,
 reading progress and settings are kept. There is no need to remove and add

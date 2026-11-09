@@ -354,8 +354,40 @@ function serve() {
     await page.evaluate(() => document.getElementById('sideNote').click()); await sleep(500);
     check('the side Note button opens the note sheet for this card', await page.evaluate(() => !document.getElementById('sheetNote').hidden));
     await back();
+
+    /* ---------- folding the side panels into rails ---------- */
+    // the card with highlights, a note and pen marks
+    await page.evaluate(() => document.getElementById('btnSaved').click()); await sleep(400);
+    await page.evaluate(() => document.querySelector('#savedTabs [data-v="marks"]').click()); await sleep(300);
+    await page.evaluate(() => Array.from(document.querySelectorAll('#marksList .mark-item')).find((b) => /Pen marks on the card/.test(b.innerText)).click()); await sleep(800);
+    const inkBefore = await inkTop(cur + ' .ink-layer');
+    // back to the card with marks, which also has pen marks
+    const geo = () => page.evaluate((c) => {
+      const L = document.getElementById('sideToc').getBoundingClientRect(), R = document.getElementById('sideMarks').getBoundingClientRect(), k = document.querySelector(c).getBoundingClientRect();
+      return { lw: Math.round(L.width), rw: Math.round(R.width), card: Math.round(k.width), clear: L.right <= k.left && k.right <= R.left,
+        lf: document.getElementById('sideToc').classList.contains('folded'), rf: document.getElementById('sideMarks').classList.contains('folded'),
+        count: document.getElementById('railCount').hidden ? 0 : +document.getElementById('railCount').textContent };
+    }, cur);
+    const g0 = await geo();
+    const marksShown = await page.evaluate(() => document.querySelectorAll('#sideMarks .side-mark, #sideMarks .card-note').length + (/Pen marks/.test(document.getElementById('sideMarks').innerText) ? 1 : 0));
+    await page.evaluate(() => document.getElementById('foldToc').click()); await sleep(500);
+    const g1 = await geo();
+    check('folding Contents leaves a slim rail and gives the card more room (up to 860px)', g1.lf && g1.lw <= 50 && g1.card > g0.card && g1.card <= 860 && g1.clear, [g0, g1]);
+    await page.evaluate(() => document.getElementById('foldMarks').click()); await sleep(500);
+    const g2 = await geo();
+    check('folding This card leaves a rail with the number of marks on the card', g2.rf && g2.rw <= 50 && g2.count === marksShown && g2.count > 0 && g2.clear && g2.card <= 860, [g2, marksShown]);
+    await shot('m12-folded');
+    await page.reload({ waitUntil: 'networkidle0' }); await sleep(1200);
+    const g3 = await geo();
+    check('the folded panels stay folded after a reload', g3.lf && g3.rf, g3);
+    check('the pen marks stay on their words with the panels folded', inkBefore > 0 && Math.abs((await inkTop(cur + ' .ink-layer')) - inkBefore) <= 1, [inkBefore, await inkTop(cur + ' .ink-layer')]);
+    await page.evaluate(() => document.getElementById('railToc').click()); await sleep(500);
+    await page.evaluate(() => document.getElementById('railMarks').click()); await sleep(500);
+    const g4 = await geo();
+    check('tapping a rail opens its panel again', !g4.lf && !g4.rf && g4.lw > 200 && g4.rw > 200 && g4.clear, g4);
     await page.setViewport({ width: 390, height: 800, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
     await sleep(600);
+    check('phone width: no panels and no rails', await page.evaluate(() => document.getElementById('sideToc').hidden && document.getElementById('sideMarks').hidden && getComputedStyle(document.getElementById('railToc')).display === 'none'));
 
     // dark theme: highlights stay readable
     await tap('#btnAa'); await tap('.seg[data-setting="theme"] button[data-v="dark"]'); await back();

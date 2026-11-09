@@ -32,6 +32,14 @@ if node tests/marks.js > tests/marks.log 2>&1; then tail -1 tests/marks.log; els
 fi
 echo
 
+echo "== touch: scrolling and drawing in pen mode (tests/touch.js)"
+if node tests/touch.js > tests/touch.log 2>&1; then tail -1 tests/touch.log; else
+  grep -v '^PASS' tests/touch.log
+  echo "Touch tests failed: no zip made. Full log: tests/touch.log"
+  exit 1
+fi
+echo
+
 echo "== updating from the released version (tests/upgrade.js)"
 if node tests/upgrade.js > tests/upgrade.log 2>&1; then tail -1 tests/upgrade.log; else
   grep -v '^PASS' tests/upgrade.log

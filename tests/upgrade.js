@@ -70,7 +70,21 @@ let SITE = null;   // which version the server hands out
     await p1.evaluate(() => document.querySelector('.card:not(.under) .foot .icon-btn.save').click());
     await sleep(800);
     const before = await dbInfo(p1);
-    check('old version: a book in a version-2 database', before.version === 2 && before.books.length === 1, before);
+    check('released version: a book on the device', before.books.length === 1, before);
+    // the released version has marks: add one, it must survive the update
+    if (before.stores.indexOf('marks') >= 0) {
+      await p1.evaluate(() => new Promise((res) => {
+        const rq = indexedDB.open('vanchan');
+        rq.onsuccess = () => {
+          const d = rq.result, t = d.transaction(['books', 'marks'], 'readwrite');
+          t.objectStore('books').getAll().onsuccess = (e) => {
+            const b = e.target.result[0];
+            t.objectStore('marks').put({ id: 'mUpgrade1', b: b.id, key: b.key, type: 'cardnote', n: 1, note: { text: 'kept' }, at: Date.now() });
+          };
+          t.oncomplete = () => { d.close(); res(); };
+        };
+      }));
+    }
 
     // a tab that can't update itself (its updater switched off) keeps the old version open
     await p1.evaluate(() => navigator.serviceWorker.getRegistrations().then((rs) => Promise.all(rs.map((r) => r.unregister()))));
@@ -81,11 +95,18 @@ let SITE = null;   // which version the server hands out
     await p2.goto('http://localhost:' + PORT + '/?v=new', { waitUntil: 'domcontentloaded' });
     await sleep(4000);
     const waiting = await p2.evaluate(() => document.getElementById('toastText').textContent);
-    check('with the old tab open, the new version waits and says to close it (no empty library)', /Close other Vanchan tabs/.test(waiting) && await p2.evaluate(() => document.getElementById('welcome').hidden !== false || document.querySelectorAll('.card').length === 0), waiting);
+    const NEW_DB = 3;
+    if (before.version < NEW_DB) {
+      check('with the old tab open, the new version waits and says to close it (no empty library)', /Close other Vanchan tabs/.test(waiting) && await p2.evaluate(() => document.getElementById('welcome').hidden !== false || document.querySelectorAll('.card').length === 0), waiting);
+    } else console.log('SKIP  same database version (' + before.version + '): no upgrade to wait for');
     await p1.close();
     await sleep(2500);
     const after = await dbInfo(p2);
-    check('once the old tab closes, the database is upgraded with the book kept', after.version === 3 && after.stores.indexOf('marks') >= 0 && after.books.length === 1, after);
+    check('the new version has the book (database ' + after.version + ')', after.version === NEW_DB && after.stores.indexOf('marks') >= 0 && after.books.length === 1, after);
+    if (before.stores.indexOf('marks') >= 0) {
+      const kept = await p2.evaluate(() => new Promise((res) => { const rq = indexedDB.open('vanchan'); rq.onsuccess = () => { const g = rq.result.transaction('marks').objectStore('marks').get('mUpgrade1'); g.onsuccess = () => { rq.result.close(); res(g.result && g.result.note.text); }; }; }));
+      check('a note made in the released version is still there', kept === 'kept', kept);
+    }
     const shown = await p2.evaluate(() => ({ cards: document.querySelectorAll('.card').length, welcome: !document.getElementById('welcome').hidden }));
     check('… and the book shows', shown.cards > 0 && !shown.welcome, shown);
     await p2.evaluate(() => document.getElementById('btnSaved').click()); await sleep(400);

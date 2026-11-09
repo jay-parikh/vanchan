@@ -10,7 +10,9 @@
  *
  * Input: an Apple Pencil (pointerType "pen") always draws; once one has been
  * used, a finger scrolls instead (palm rejection). Without a pen a finger or
- * the mouse draws.
+ * the mouse draws, and two fingers scroll (a second finger cancels the stroke
+ * the first one began). The "Scroll" tool (t: 's') lets one finger scroll:
+ * the app then lets touches through the layer (class "scrolling").
  */
 (function (root) {
   'use strict';
@@ -87,12 +89,12 @@
    *   tool()      -> { t: 'p' | 'h' | 'e' (eraser), c: colour }
    *   strokes     initial strokes (copied)
    *   onChange(strokes)  after every finished stroke, erase or undo
-   *   onScroll(dy)       two-finger drag while a finger draws (to scroll the card)
+   *   onScroll(dy, dx)   two-finger drag (to scroll what is under the layer)
    * Returns { strokes(), undo(), canUndo(), redraw(), destroy() }.
    */
   function surface(canvas, opts) {
     var strokes = (opts.strokes || []).slice(), history = [], cur = null, erasing = false, curPts = null;
-    var two = null;
+    var two = null, active = {}, multi = false;
 
     function size() { return opts.size(); }
     function redraw() {
@@ -119,6 +121,15 @@
 
     function down(e) {
       if (!draws(e)) return;
+      active[e.pointerId] = 1;
+      // a second finger: this is a scroll, not a stroke
+      if (Object.keys(active).length > 1) {
+        multi = true;
+        if (erasing) { strokes = history.pop() || strokes; erasing = false; }
+        cur = null; curPts = null; redraw();
+        return;
+      }
+      if (multi || opts.tool().t === 's') return;
       e.preventDefault();
       try { canvas.setPointerCapture(e.pointerId); } catch (x) { /* old browsers */ }
       var tool = opts.tool(), p = pos(e);
@@ -129,6 +140,7 @@
       redraw();
     }
     function move(e) {
+      if (multi) return;
       if (erasing) { if (eraseAt(pos(e))) erasing.changed = true; return; }
       if (!cur) return;
       e.preventDefault();
@@ -138,7 +150,9 @@
       cur.d = encode(curPts, s[0], s[1]);
       redraw();
     }
-    function up() {
+    function up(e) {
+      delete active[e.pointerId];
+      if (multi) { if (!Object.keys(active).length) multi = false; return; }
       if (erasing) {
         var changed = erasing.changed;
         erasing = false;
@@ -153,12 +167,13 @@
       opts.onChange(strokes.slice());
     }
     // two fingers scroll the card while one finger draws
-    function tstart(e) { if (e.touches.length === 2) { two = e.touches[0].clientY + e.touches[1].clientY; cur = null; curPts = null; redraw(); } }
+    function mid(e) { return [(e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2]; }
+    function tstart(e) { if (e.touches.length === 2) { two = mid(e); multi = true; cur = null; curPts = null; redraw(); } }
     function tmove(e) {
       if (e.touches.length !== 2 || two === null) return;
-      var y = e.touches[0].clientY + e.touches[1].clientY;
-      if (opts.onScroll) opts.onScroll((two - y) / 2);
-      two = y;
+      var m = mid(e);
+      if (opts.onScroll) opts.onScroll(two[1] - m[1], two[0] - m[0]);
+      two = m;
       e.preventDefault();
     }
     function tend(e) { if (e.touches.length < 2) two = null; }
