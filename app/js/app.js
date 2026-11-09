@@ -26,7 +26,7 @@
     marker: svg('<path d="m9 15 6-6 3 3-6 6H9v-3Z"/><path d="M4 21h8"/>'),
     eraser: svg('<path d="m7 21-4-4L14 6l6 6-9 9H7Z"/><path d="M11 21h9"/>'),
     undo: svg('<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>'),
-    scroll: svg('<path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/>'),
+    hand: svg('<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12M11 11V4.5a1.5 1.5 0 0 1 3 0V11M14 11V6.5a1.5 1.5 0 0 1 3 0V14a6 6 0 0 1-6 6h-1a5 5 0 0 1-4.3-2.5L4 14.2a1.5 1.5 0 0 1 2.4-1.8L8 14"/>'),
     note: svg('<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>'),
     shuffle: svg('<path d="M4 7h3c4 0 6 10 10 10h3M4 17h3c1.6 0 2.8-1.6 3.9-3.6M13.1 9.6C14.2 8.1 15.3 7 17 7h3"/><path d="m18 4 3 3-3 3M18 14l3 3-3 3"/>')
   };
@@ -464,7 +464,7 @@
     const n = store.get('penHints', 0);
     if (!touch || n >= 3) return;
     store.set('penHints', n + 1);
-    toast('One finger draws · scroll with two fingers, or tap Scroll', null, null, 4500);
+    toast('Tap Move to scroll, Draw to mark', null, null, 4000);
   }
 
   function exitPen() {
@@ -473,7 +473,8 @@
     render();
   }
 
-  // Pen · Highlight · Eraser · Undo · Done; tap Pen again for its colours
+  // [Move | Draw] · Highlight · Eraser · Undo · Done
+  // Move: one finger scrolls the card or page. Draw: one finger draws; tap Draw again for its colours.
   function penBar(state, done) {
     const bar = el('div', 'pen-bar');
     bar.setAttribute('role', 'toolbar');
@@ -498,14 +499,16 @@
       pop.appendChild(d);
     });
     bar.appendChild(pop);
-    bar.appendChild(tool('p', ICON.pen, 'Pen', () => {
+    const mode = el('div', 'pen-mode');
+    mode.appendChild(tool('s', ICON.hand, 'Move', () => { state.tool = { t: 's' }; pop.hidden = true; updatePenBar(); }));
+    mode.appendChild(tool('p', ICON.pen, 'Draw', () => {
       if (state.tool.t === 'p') pop.hidden = !pop.hidden;
       else { state.tool = { t: 'p', c: penColor() }; pop.hidden = true; }
       updatePenBar();
     }));
+    bar.appendChild(mode);
     bar.appendChild(tool('h', ICON.marker, 'Highlight', () => { state.tool = { t: 'h' }; pop.hidden = true; updatePenBar(); }));
     bar.appendChild(tool('e', ICON.eraser, 'Eraser', () => { state.tool = { t: 'e' }; pop.hidden = true; updatePenBar(); }));
-    bar.appendChild(tool('s', ICON.scroll, 'Scroll', () => { state.tool = { t: 's' }; pop.hidden = true; updatePenBar(); }));
     bar.appendChild(tool('u', ICON.undo, 'Undo', () => { if (state.surface) state.surface.undo(); updatePenBar(); }));
     const d = el('button', 'primary pen-done', 'Done');
     d.onclick = (e) => { e.stopPropagation(); done(); };

@@ -333,11 +333,16 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   padding: 6px 8px calc(6px + var(--safe-b, 0px)); border-top: 1px solid var(--line); background: var(--card);
 }
 .pen-tool {
-  width: 52px; height: 52px; border: 0; border-radius: 10px; background: none; color: var(--ink);
+  width: 50px; height: 52px; border: 0; border-radius: 10px; background: none; color: var(--ink);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px;
 }
 .pen-tool svg { width: 22px; height: 22px; }
 .pen-tool.on { background: var(--accent-soft); }
+.pen-tool span { font-size: 10.5px; white-space: nowrap; }
+/* Move | Draw: a two-way switch, so it is always clear which one is on */
+.pen-mode { display: flex; gap: 2px; padding: 2px; background: var(--chip); border-radius: 12px; }
+.pen-mode .pen-tool { width: 54px; height: 48px; }
+.pen-mode .pen-tool.on { background: var(--card); color: var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.14); font-weight: 600; }
 .pen-tool:disabled { opacity: .35; }
 .pen-done { height: 44px; padding: 0 18px; }
 .pen-colors {

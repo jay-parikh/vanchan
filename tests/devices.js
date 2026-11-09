@@ -170,7 +170,11 @@ async function device(browser, name) {
   const waitToast = (pg, re, ms) => pg.waitForFunction((src) => new RegExp(src).test(document.getElementById('toastText').textContent), { timeout: ms || 20000 }, re.source).then(() => true, () => false);
   const tap = async (pg, sel) => { await pg.waitForSelector(sel, { visible: true, timeout: 8000 }); await pg.tap(sel); await sleep(350); };
   const back = async (pg) => { await pg.evaluate(() => history.back()); await sleep(400); };
-  const next = async (pg) => { await pg.keyboard.press('ArrowDown'); await sleep(700); };
+  // the next card; at the end of a (random) order, the card before instead
+  const next = async (pg) => {
+    await pg.keyboard.press('ArrowDown'); await sleep(700);
+    if (!(await pg.$('.card:not(.under) .foot'))) { await pg.keyboard.press('ArrowUp'); await sleep(500); await pg.keyboard.press('ArrowUp'); await sleep(700); }
+  };
   const syncNow = (pg) => pg.evaluate(() => window.Sync.syncNow());
   const status = (pg) => pg.evaluate(() => window.Sync.status());
   const curLabel = (pg) => pg.evaluate((c) => { const e = document.querySelector(c); const t = e && e.querySelector('.title'); return t ? t.innerText : e && e.querySelector('.text p') ? e.querySelector('.text p').innerText.slice(0, 60) : null; }, cur);

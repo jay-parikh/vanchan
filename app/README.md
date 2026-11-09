@@ -115,9 +115,10 @@ read further, a "Continue from …" message offers to go there.
 - **Wide screens** (desktop, iPad landscape): the book's contents on the left
   and this card's highlights and notes on the right. Each folds into a slim
   rail (« »), giving the card up to 860px; the choice is kept per device.
-- **Moving around while the pen is on:** two fingers scroll, or tap **Scroll**
-  and use one finger. With an Apple Pencil, the pencil draws and a finger
-  scrolls.
+- **Moving around while the pen is on:** the pen bar starts with a
+  **Move | Draw** switch. Move: one finger scrolls; Draw: one finger draws.
+  Two fingers always scroll. With an Apple Pencil, the pencil draws and a
+  finger scrolls.
 - **Printed index:** a book's own index page (અનુક્રમણિકા) becomes a card in
   book order; tap an entry to open that topic.
 - With sync on, all of this syncs (needs the marks table: `../setup/README.md`).

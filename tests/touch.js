@@ -125,11 +125,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const scrollTop = () => page.evaluate((c) => Math.round(document.querySelector(c + ' .body').scrollTop), cur);
     const cx = bodyBox.x + bodyBox.width / 2;
 
-    // 1. the Scroll tool: one finger scrolls the card
+    const sw = await page.evaluate((c) => {
+      const m = document.querySelector(c + ' .pen-mode');
+      return m && { labels: Array.from(m.querySelectorAll('.pen-tool')).map((b) => b.innerText.trim()), on: (m.querySelector('.pen-tool.on') || {}).innerText,
+        scrollButton: !!Array.from(document.querySelectorAll(c + ' .pen-tool')).find((b) => /Scroll/.test(b.innerText)),
+        fits: document.querySelector(c + ' .pen-bar').scrollWidth <= document.querySelector(c + ' .pen-bar').clientWidth };
+    }, cur);
+    check('the pen bar starts with a labelled Move | Draw switch, on Draw, and fits the card', sw && sw.labels.join() === 'Move,Draw' && sw.on === 'Draw' && !sw.scrollButton && sw.fits, sw);
+    await page.screenshot({ path: path.join(SHOTS, 't00-move-draw.png') });
+
+    // 1. Move: one finger scrolls the card
     const hasScroll = await pickTool(cur, 's');
     await touch([[[cx, bodyBox.y + bodyBox.height * 0.8], [cx, bodyBox.y + bodyBox.height * 0.2]]]);
     const s1 = await scrollTop();
-    check('pen mode: with the Scroll tool, one finger scrolls the card', hasScroll && s1 > 150, { hasScroll, scrollTop: s1 });
+    check('pen mode: on Move, one finger scrolls the card', hasScroll && s1 > 150, { hasScroll, scrollTop: s1 });
     check('… and scrolling draws nothing', !(await inkMark('ink-card')));
 
     // 2. two fingers scroll the card while the pen is the tool
@@ -185,7 +194,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const hasScrollV = await pickTool('#vPenBar', 's');
     await touch([[[vx, vb.y + vb.height * 0.8], [vx, vb.y + vb.height * 0.2]]]);
     const v1 = await vTop();
-    check('page pen: with the Scroll tool, one finger scrolls the page', hasScrollV && v1 > 150, { hasScrollV, scrollTop: v1 });
+    check('page pen: on Move, one finger scrolls the page', hasScrollV && v1 > 150, { hasScrollV, scrollTop: v1 });
     await pickTool('#vPenBar', 'p');
     const vb2 = await vTop();
     // two fingers moving down: back up the page
