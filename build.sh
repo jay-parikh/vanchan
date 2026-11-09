@@ -24,6 +24,22 @@ if node tests/ui.js > tests/ui.log 2>&1; then tail -1 tests/ui.log; else
 fi
 echo
 
+echo "== highlights, notes, pen, index card, wide screens (tests/marks.js)"
+if node tests/marks.js > tests/marks.log 2>&1; then tail -1 tests/marks.log; else
+  grep -v '^PASS' tests/marks.log
+  echo "Marking tests failed: no zip made. Full log: tests/marks.log"
+  exit 1
+fi
+echo
+
+echo "== updating from the released version (tests/upgrade.js)"
+if node tests/upgrade.js > tests/upgrade.log 2>&1; then tail -1 tests/upgrade.log; else
+  grep -v '^PASS' tests/upgrade.log
+  echo "Upgrade tests failed: no zip made. Full log: tests/upgrade.log"
+  exit 1
+fi
+echo
+
 echo "== sync between two devices (tests/devices.js)"
 if node tests/devices.js > tests/devices.log 2>&1; then tail -1 tests/devices.log; else
   grep -v '^PASS' tests/devices.log

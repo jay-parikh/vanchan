@@ -73,6 +73,14 @@ app.
      - `https://*--vanchan.netlify.app/**` (free draft deploys for testing)
      - `http://localhost:8766` (only if testing on the server)
 
+## Update for v12: highlights and notes
+
+Version 12 syncs highlights, notes and pen marks. They need one more table.
+In Supabase **SQL Editor → New query**, paste all of
+`setup/vanchan-setup.sql` again and press **Run**. It is safe to run again: it
+only adds what is missing. Until then everything else syncs, and Settings
+says highlights and notes are waiting for this step.
+
 ## 5. Tell the app
 
 Send me the Project URL and the publishable key, or put them in

@@ -210,6 +210,49 @@
     return withNum / lines.length > 0.5;
   }
 
+  // A printed contents page becomes the book's index: each "title  page"
+  // becomes an entry (two columns often share one line: "title ૧ title ૫"),
+  // a line without a page number is a section heading ("[૩.૧] …"), and a
+  // first line in a larger type is the page's title ("અનુક્રમણિકા").
+  var PAGE_NO = /^[!?’'”"…\.,)]*([0-9૦-૯]{1,4})$/;
+
+  function indexEntries(text, carry) {
+    var out = [], words = carry ? carry.split(' ') : [];
+    text.split(' ').forEach(function (tok) {
+      var m = tok.match(PAGE_NO);
+      if (m && words.length) {
+        var lead = tok.slice(0, tok.length - m[1].length);
+        var t = (words.join(' ') + (lead ? ' ' + lead : '')).replace(/[\s.…]{2,}$/, '').replace(/\s+([!?])$/, ' $1').trim();
+        if (/[A-Za-z\u0A80-\u0AFF]/.test(t)) out.push({ t: t, p: m[1] });
+        words = [];
+      } else if (tok) words.push(tok);
+    });
+    return { entries: out, rest: words.join(' ') };
+  }
+
+  function indexOf(lines) {
+    var sections = [], cur = null, title = '', carry = '';
+    var big = Math.max.apply(null, lines.map(function (ln) { return ln.size; }));
+    lines.forEach(function (ln, i) {
+      var r = indexEntries(ln.text, carry);
+      // "ખંડ : ૩ બુદ્ધિ" is a part heading, not an entry for page ૩
+      if (r.entries.length && /:$/.test(r.entries[0].t)) r = { entries: [], rest: '' };
+      if (!r.entries.length) {
+        if (carry) { carry += ' ' + ln.text; return; }
+        if (i === 0 && ln.size >= big - 0.5 && lines.some(function (l) { return l.size < big - 0.5; })) title = ln.text;
+        else { cur = { h: ln.text, e: [] }; sections.push(cur); }
+        return;
+      }
+      if (!cur) { cur = { h: '', e: [] }; sections.push(cur); }
+      cur.e = cur.e.concat(r.entries);
+      carry = r.rest;    // a title that runs on to the next line
+    });
+    // two columns share each line: order the entries by page, as printed column by column
+    sections.forEach(function (sec) { sec.e = sec.e.map(function (e, k) { return [e, k]; }).sort(function (a, b) { return toInt(a[0].p) - toInt(b[0].p) || a[1] - b[1]; }).map(function (x) { return x[0]; }); });
+    if (!title) title = lines.some(function (ln) { return /[\u0A80-\u0AFF]/.test(ln.text); }) ? 'અનુક્રમણિકા' : 'Contents';
+    return { title: title, sections: sections.filter(function (s) { return s.e.length || s.h; }) };
+  }
+
   /* ---------- columns ---------- */
 
   function columnBoxes(lines, bodySize) {
@@ -306,7 +349,19 @@
 
     var docBoxes = null;
     pagesLines.forEach(function (lines, pi) {
-      if (isContentsPage(lines)) { endPara(); endHead(); return; }
+      if (isContentsPage(lines)) {
+        endPara(); endHead();
+        var ix = indexOf(lines), last = blocks[blocks.length - 1];
+        if (!ix.sections.some(function (s) { return s.e.length; })) return;
+        if (last && last.t === 'index' && last.last === pi) {
+          // the index runs on from the previous page
+          var first = ix.sections[0];
+          if (first && !first.h && last.sections.length) { last.sections[last.sections.length - 1].e = last.sections[last.sections.length - 1].e.concat(first.e); ix.sections.shift(); }
+          last.sections = last.sections.concat(ix.sections);
+          last.last = pi + 1;
+        } else blocks.push({ t: 'index', title: ix.title, sections: ix.sections, page: pi + 1, last: pi + 1 });
+        return;
+      }
       var boxes = columnBoxes(lines, bodySize);
       if (boxes.length) docBoxes = boxes; else boxes = docBoxes || [];
       var prev = null;
@@ -396,7 +451,7 @@
     });
   }
 
-  var api = { layoutPages: layoutPages, readPages: readPages, extract: extract };
+  var api = { layoutPages: layoutPages, readPages: readPages, extract: extract, indexEntries: indexEntries };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PdfBook = api;
 })(this);

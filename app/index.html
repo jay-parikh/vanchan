@@ -36,7 +36,20 @@
     </header>
 
     <main id="feed">
+      <aside class="side side-l" id="sideToc" aria-label="Contents" hidden>
+        <div class="side-head">Contents</div>
+        <div class="side-title" lang="gu"></div>
+        <ul class="toc"></ul>
+      </aside>
       <div id="stack" aria-live="polite"></div>
+      <aside class="side side-r" id="sideMarks" aria-label="This card's highlights and notes" hidden>
+        <div class="side-head">This card</div>
+        <div class="side-list"></div>
+        <div class="side-actions">
+          <button class="secondary" id="sideNote">Note</button>
+          <button class="secondary" id="sidePen">Pen</button>
+        </div>
+      </aside>
       <div class="nav-btns" id="navBtns">
         <button class="icon-btn" id="btnPrev" aria-label="Previous card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></button>
         <button class="icon-btn" id="btnNext" aria-label="Next card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
@@ -76,11 +89,16 @@
   <div class="sheet" id="sheetSaved" role="dialog" aria-modal="true" aria-labelledby="savedTitle" hidden>
     <div class="sheet-panel">
       <div class="sheet-head">
-        <h2 id="savedTitle">Saved cards</h2>
+        <h2 id="savedTitle">Saved</h2>
         <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </div>
       <div class="sheet-body">
+        <div class="seg saved-tabs" id="savedTabs" role="tablist">
+          <button data-v="cards" role="tab">Saved cards</button>
+          <button data-v="marks" role="tab">Highlights &amp; notes</button>
+        </div>
         <ul class="saved-list" id="savedList"></ul>
+        <div id="marksList" class="marks-list" hidden></div>
       </div>
     </div>
   </div>
@@ -185,6 +203,7 @@
         <button id="mCopy">Copy text</button>
         <button id="mHide">Don't show this card again</button>
         <button id="mRandom" hidden>Back to random cards</button>
+        <button id="mNote">Note on this card</button>
         <button id="mToc">Contents of this book</button>
         <button id="mBookOrder">Read this book in order from here</button>
         <button data-close>Cancel</button>
@@ -197,13 +216,62 @@
     <div class="viewer-bar">
       <button class="icon-btn" id="vClose" aria-label="Back to card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       <div class="viewer-title"><span id="vTitle">Page</span><span id="vSub"></span></div>
+      <button class="icon-btn" id="vPen" aria-label="Pen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></svg></button>
       <button class="icon-btn" id="vZoom" aria-label="Zoom"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M11 8v6M8 11h6"/></svg></button>
       <button class="icon-btn" id="vPrev" aria-label="Previous page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 7l-5 5 5 5"/></svg></button>
       <button class="icon-btn" id="vNext" aria-label="Next page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 7l5 5-5 5"/></svg></button>
     </div>
     <div class="viewer-body" id="vBody">
-      <canvas id="vCanvas"></canvas>
+      <div class="v-page" id="vPage"><canvas id="vCanvas"></canvas><canvas id="vInk" class="ink-layer" aria-hidden="true"></canvas></div>
       <p id="vMsg" class="fine" hidden></p>
+    </div>
+  </div>
+
+  <!-- Selected words: highlight or note -->
+  <div class="float-bar" id="selBar" role="toolbar" aria-label="Mark the selected words" hidden>
+    <button id="selHighlight"><span class="dot" id="selDot"></span>Highlight</button>
+    <span class="sep"></span>
+    <button id="selNote"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></svg>Note</button>
+  </div>
+
+  <!-- A tapped highlight: colour, underline, note, remove -->
+  <div class="float-bar" id="markBar" role="toolbar" aria-label="Change the highlight" hidden>
+    <button class="mb-color" data-c="yellow" aria-label="Yellow" style="--c:#F5D35B"></button>
+    <button class="mb-color" data-c="green" aria-label="Green" style="--c:#8FD07E"></button>
+    <button class="mb-color" data-c="blue" aria-label="Blue" style="--c:#86B4EE"></button>
+    <button class="mb-color" data-c="pink" aria-label="Pink" style="--c:#F09BBB"></button>
+    <button id="mbUnder" class="mb-under" aria-label="Underline">U</button>
+    <span class="sep"></span>
+    <button id="mbNote" class="mb-icon" aria-label="Note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></svg></button>
+    <button id="mbRemove" class="mb-icon" aria-label="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
+  </div>
+
+  <!-- A note: typed or hand-written -->
+  <div class="sheet" id="sheetNote" role="dialog" aria-modal="true" aria-labelledby="noteTitle" hidden>
+    <div class="sheet-panel">
+      <div class="sheet-head">
+        <h2 id="noteTitle">Note</h2>
+        <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="sheet-body note-body">
+        <div class="note-quote"><span class="note-bar" id="noteBar"></span><p id="noteQuote" lang="gu"></p></div>
+        <div class="seg" id="noteTabs" role="tablist">
+          <button data-v="type" role="tab">Type</button>
+          <button data-v="write" role="tab">Write by hand</button>
+        </div>
+        <textarea id="noteText" rows="7" lang="gu" aria-label="Your note" placeholder="Your note"></textarea>
+        <div class="note-pad" id="notePad" hidden><canvas id="noteInk" aria-label="Write your note here"></canvas></div>
+        <div class="note-actions">
+          <span class="note-tools" id="noteTools" hidden>
+            <button class="icon-btn" id="notePen" aria-label="Pen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></svg></button>
+            <button class="icon-btn" id="noteEraser" aria-label="Eraser"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 21-4-4L14 6l6 6-9 9H7Z"/><path d="M11 21h9"/></svg></button>
+            <button class="icon-btn" id="noteUndo" aria-label="Undo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+          </span>
+          <span class="grow"></span>
+          <button class="link" id="noteDelete">Delete</button>
+          <button class="primary" id="noteSave">Save</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -225,6 +293,8 @@
   <script src="js/epubbook.js"></script>
   <script src="js/mdbook.js"></script>
   <script src="js/cards.js"></script>
+  <script src="js/marks.js"></script>
+  <script src="js/ink.js"></script>
   <script src="js/db.js"></script>
   <script src="js/config.js"></script>
   <script src="js/sync.js"></script>

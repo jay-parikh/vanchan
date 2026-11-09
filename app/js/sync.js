@@ -32,9 +32,10 @@
   var A = null;                // app adapter
   var session = null;          // { access_token, refresh_token, expires_at, user: { id, email } }
   var state = {};              // book key -> progress { parser, read, readReset, marks, hidden, pos }
-  var dirty = { progress: {}, books: {}, deleted: {} };
+  var dirty = { progress: {}, books: {}, deleted: {}, marks: {} };
+  var marksCursor = '';        // server time of the newest mark change already fetched
   var started = false, running = null, pushTimer = null, lastPull = 0;
-  var status = { busy: false, error: '', lastSync: 0 };
+  var status = { busy: false, error: '', lastSync: 0, marksMissing: false };
   var shownPos = 0;            // newest other-device place already offered
 
   /* ---------- small helpers ---------- */
@@ -83,7 +84,7 @@
   }
 
   function save() {
-    return Promise.all([A.setKv('sync:state', state), A.setKv('sync:dirty', dirty)]).catch(function () {});
+    return Promise.all([A.setKv('sync:state', state), A.setKv('sync:dirty', dirty), A.setKv('sync:marksCursor', marksCursor)]).catch(function () {});
   }
 
   function setStatus(patch) {
@@ -250,7 +251,7 @@
     var tok = session && session.access_token;
     setOn(false);
     if (tok) fetchT(base + '/auth/v1/logout?scope=local', { method: 'POST', headers: headers(tok) }, 8000).catch(function () {});
-    state = {}; dirty = { progress: {}, books: {}, deleted: {} };
+    state = {}; dirty = { progress: {}, books: {}, deleted: {}, marks: {} }; marksCursor = '';
     return Promise.all([saveSession(null), save()]).then(function () { setStatus({ error: '', lastSync: 0 }); });
   }
 
@@ -305,9 +306,9 @@
 
   // leaving the app: send progress now (small, so it fits a keepalive request)
   function flush() {
-    if (!isOn() || !session || !Object.keys(dirty.progress).length) return;
+    if (!isOn() || !session || !(Object.keys(dirty.progress).length || Object.keys(dirty.marks).length)) return;
     clearTimeout(pushTimer);
-    pushProgress(true).catch(function () {});
+    pushProgress(true).then(function () { return pushMarks(true); }).catch(function () {});
   }
 
   /* ---------- recording local changes ---------- */
@@ -352,6 +353,7 @@
       flags(p.hidden, snap.hidden);
       dirty.progress[b.key] = 1;
     });
+    A.allMarks().forEach(function (m) { if (m.key) dirty.marks[m.id] = 1; });
     save();
   }
 
@@ -366,6 +368,11 @@
       if (!isOn()) return;
       var t = Date.now();
       A.books().forEach(function (b) { if (b.key) { var p = progressOf(b); p.read = {}; p.readReset = t; dirty.progress[b.key] = 1; } });
+      save(); schedulePush();
+    },
+    markChanged: function (m) {
+      if (!isOn() || !m.key) return;
+      dirty.marks[m.id] = 1;
       save(); schedulePush();
     },
     bookAdded: function (b) { if (isOn() && b.key) { dirty.books[b.key] = 1; delete dirty.deleted[b.key]; save(); schedulePush(); } },
@@ -394,7 +401,7 @@
 
   function syncNow() {
     if (!isOn() || !session) return Promise.resolve();
-    if (running) return running.then(function () { return Object.keys(dirty.progress).length ? syncNow() : null; });
+    if (running) return running.then(function () { return Object.keys(dirty.progress).length || Object.keys(dirty.marks).length ? syncNow() : null; });
     clearTimeout(pushTimer);
     setStatus({ busy: true });
     running = run().then(function () {
@@ -412,7 +419,8 @@
       .then(keyBooks)
       .then(pushDeletes)
       .then(syncBooks)
-      .then(syncProgress);
+      .then(syncProgress)
+      .then(syncMarks);
   }
 
   // books added before keys existed get theirs from the stored original
@@ -435,6 +443,8 @@
         return api('DELETE', '/storage/v1/object/' + objectPath(key), { raw: true });
       }).then(function () {
         return api('DELETE', '/rest/v1/vanchan_progress?book_key=eq.' + key, { raw: true });
+      }).then(function () {
+        return api('DELETE', '/rest/v1/vanchan_marks?book_key=eq.' + key, { raw: true });
       }).then(function () { delete dirty.deleted[key]; });
     }, Promise.resolve());
   }
@@ -499,7 +509,7 @@
             });
           });
         });
-        chain = chain.then(function () { return A.gotBooks && A.gotBooks(downloads.length); });
+        chain = chain.then(function () { marksCursor = ''; return A.gotBooks && A.gotBooks(downloads.length); });
       }
       return chain;
     });
@@ -550,6 +560,62 @@
     });
   }
 
+  /* ---------- highlights, notes and pen marks ---------- */
+
+  // the parts of a mark other devices need (b is the local book id)
+  function markRow(m, b) {
+    var data = {};
+    Object.keys(m).forEach(function (k) { if (k !== 'b' && k !== 'key' && k !== 'lost') data[k] = m[k]; });
+    return { user_id: session.user.id, id: m.id, book_key: m.key, kind: m.type, parser: pv(b), data: data, at: m.at || 0, deleted: !!m.del };
+  }
+
+  function pushMarks(keepalive) {
+    var ids = Object.keys(dirty.marks), books = {}, rows = [];
+    A.books().forEach(function (b) { if (b.key) books[b.key] = b; });
+    ids.forEach(function (id) {
+      var m = A.markById(id);
+      if (!m || !books[m.key]) { delete dirty.marks[id]; return; }
+      // pen strokes can be big: send them on their own, not in a keepalive request
+      if (keepalive && m.strokes && JSON.stringify(m.strokes).length > 30000) return;
+      rows.push(markRow(m, books[m.key]));
+    });
+    if (!rows.length) return save();
+    var chain = Promise.resolve();
+    for (var i = 0; i < rows.length; i += 50) {
+      (function (batch) {
+        chain = chain.then(function () { return upsert('vanchan_marks', batch, keepalive).then(function () { batch.forEach(function (r) { delete dirty.marks[r.id]; }); }); });
+      })(rows.slice(i, i + 50));
+    }
+    return chain.then(save);
+  }
+
+  function syncMarks() {
+    var q = '/rest/v1/vanchan_marks?select=*&order=updated_at.asc' + (marksCursor ? '&updated_at=gte.' + encodeURIComponent(marksCursor) : '');
+    return api('GET', q).then(function (rows) {
+      status.marksMissing = false;
+      var books = {}, changed = false;
+      A.books().forEach(function (b) { if (b.key && !books[b.key]) books[b.key] = b; });
+      (rows || []).forEach(function (r) {
+        if (r.updated_at && r.updated_at > marksCursor) marksCursor = r.updated_at;
+        var b = books[r.book_key];
+        if (!b) return;
+        var remote = Object.assign({}, r.data || {}, { id: r.id, type: r.kind, at: +r.at || 0, del: !!r.deleted, key: r.book_key, b: b.id });
+        if (dirty.marks[r.id]) {
+          var mine = A.markById(r.id);
+          if (mine && (mine.at || 0) >= remote.at) return;   // ours is newer: it goes up below
+          delete dirty.marks[r.id];
+        }
+        if (A.applyRemoteMark(remote, r.parser)) changed = true;
+      });
+      if (changed) A.marksChanged();
+      return pushMarks(false);
+    }, function (e) {
+      // the marks table isn't set up yet: everything else still syncs
+      if (/\(404\)|PGRST205|42P01/.test(e.message || '')) { status.marksMissing = true; return; }
+      throw e;
+    });
+  }
+
   function flagsOf(p) {
     var on = function (m) { return Object.keys(m).filter(function (k) { return m[k] > 0; }); };
     return { read: Object.keys(p.read), marks: on(p.marks), hidden: on(p.hidden) };
@@ -575,10 +641,11 @@
     A = adapter;
     if (!cfg) return Promise.resolve();
     var back = readRedirect();
-    return Promise.all([A.getKv('sync:session', null), A.getKv('sync:state', {}), A.getKv('sync:dirty', null)]).then(function (v) {
+    return Promise.all([A.getKv('sync:session', null), A.getKv('sync:state', {}), A.getKv('sync:dirty', null), A.getKv('sync:marksCursor', '')]).then(function (v) {
       session = v[0]; state = v[1] || {};
       dirty = v[2] || dirty;
-      ['progress', 'books', 'deleted'].forEach(function (k) { if (!dirty[k]) dirty[k] = {}; });
+      marksCursor = v[3] || '';
+      ['progress', 'books', 'deleted', 'marks'].forEach(function (k) { if (!dirty[k]) dirty[k] = {}; });
       var wasSigningIn = ls('signingIn');
       ls('signingIn', null);
       if (back && back.session) {
@@ -609,12 +676,13 @@
     sha256: sha256,
     status: function () {
       return { on: isOn(), email: session && session.user ? session.user.email : '', signedIn: !!session,
-        busy: status.busy, error: status.error, lastSync: status.lastSync,
+        busy: status.busy, error: status.error, lastSync: status.lastSync, marksMissing: status.marksMissing,
         // books added before the app kept original files: nothing to upload
         cantSync: A ? A.books().filter(function (b) { return !b.key && !b.hasFile; }).length : 0 };
     },
     read: api_.read, mark: api_.mark, hide: api_.hide, pos: api_.pos, resetRead: api_.resetRead,
     bookAdded: api_.bookAdded, bookChanged: api_.bookChanged, bookDeleted: api_.bookDeleted, remap: api_.remap,
+    markChanged: api_.markChanged,
     _merge: merge
   };
 })(this);

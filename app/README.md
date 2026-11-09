@@ -96,6 +96,28 @@ read further, a "Continue from …" message offers to go there.
 - Text size, font and theme stay per device.
 - Netlify is not involved: sync uses no Netlify credits.
 
+## Highlights, notes and pen
+
+- **Words:** select them, then tap **Highlight** (your last colour) or **Note**.
+  Tap a highlight to change its colour (4), add or remove an underline, open
+  its note, or remove it. A highlight can run across paragraphs.
+- **Notes:** one sheet, **Type** or **Write by hand** (lined paper with pen,
+  eraser and undo). It remembers which one you used last. Notes go on
+  selected words, or on the whole card with ⋯ → "Note on this card".
+- **Pen on a card:** the pen button in the card's footer. Pen, Highlight,
+  Eraser, Undo and Done; tap Pen again for its colours. A card you draw on
+  keeps the text size, font and width it was drawn at, so the marks stay on
+  their words.
+- **Pen on a PDF page:** the pen button in the page viewer, with the same
+  tools. The marks stay put when you zoom.
+- **Saved → Highlights & notes:** everything you marked, by book. "Send to
+  Notes…" shares a book's highlights and notes as text (Apple Notes, Mail…).
+- **Wide screens** (desktop, iPad landscape): the book's contents on the left
+  and this card's highlights and notes on the right.
+- **Printed index:** a book's own index page (અનુક્રમણિકા) becomes a card in
+  book order; tap an entry to open that topic.
+- With sync on, all of this syncs (needs the marks table: `../setup/README.md`).
+
 ## Search
 
 The magnifier in the top bar searches card titles and text. A card is found
@@ -112,7 +134,7 @@ in `js/app.js`, so books already added are read again.
 Build with `../build.sh`: it runs both test suites in `../tests` and makes
 `vanchan.zip` only when they pass.
 
-When you change any file, also change `VERSION` in `sw.js` (currently `vanchan-v11`).
+When you change any file, also change `VERSION` in `sw.js` (currently `vanchan-v12`).
 The app looks for a new version each time it is opened or brought back to the
 screen, downloads it, and reloads itself into it ("App updated"). Books,
 reading progress and settings are kept. There is no need to remove and add

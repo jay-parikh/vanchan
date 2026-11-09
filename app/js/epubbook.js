@@ -63,7 +63,13 @@
         flush();
         var t = clean(node.textContent), m = t.match(PAGE_MARK);
         if (m) state.label = m[1];
-        else if (t) blocks.push({ t: 'h', level: h[1] === '1' ? 1 : 2, text: t, label: state.label });
+        else if (t) {
+          // the id a contents link points at, so the index can jump to this heading
+          var id = node.getAttribute('id') || (node.querySelector && node.querySelector('[id]') && node.querySelector('[id]').getAttribute('id'));
+          var hb = { t: 'h', level: h[1] === '1' ? 1 : 2, text: t, label: state.label };
+          if (state.file) hb.anchor = state.file + (id ? '#' + id : '');
+          blocks.push(hb);
+        }
         return;
       }
       var isBlock = BLOCK.test(name);
@@ -73,6 +79,21 @@
     }
     visit(body);
     flush();
+  }
+
+  // The book's own contents page: its links become index entries that jump
+  // to the heading they point at.
+  function indexBlock(body, file) {
+    var entries = [];
+    byLocal(body, 'a').forEach(function (a) {
+      var t = clean(a.textContent), href = a.getAttribute('href') || '';
+      if (!t || /^[a-z]+:/i.test(href) || !href || PAGE_MARK.test(t)) return;   // "(પા. ૬)" links are page numbers, not topics
+      var frag = href.indexOf('#') >= 0 ? href.slice(href.indexOf('#')) : '';
+      entries.push({ t: t, a: resolve(file, href) + frag });
+    });
+    if (entries.length < 3) return null;
+    var guj = entries.some(function (e) { return /[\u0A80-\u0AFF]/.test(e.t); });
+    return { t: 'index', title: guj ? 'અનુક્રમણિકા' : 'Contents', sections: [{ h: '', e: entries }] };
   }
 
   // share of a document's text that sits inside links (a contents page)
@@ -136,7 +157,9 @@
         return f.async('string').then(function (html) {
           var doc = parseXml(html, /html/.test(it.type) && !/xhtml/.test(it.type) ? 'text/html' : 'application/xhtml+xml');
           var body = doc.body || byLocal(doc, 'body')[0];
+          state.file = it.href;
           if (body && linkShare(body) < 0.5) walk(body, blocks, state);
+          else if (body) { var ix = indexBlock(body, it.href); if (ix) { ix.label = state.label; blocks.push(ix); } }
           return next();
         });
       }

@@ -64,6 +64,34 @@ begin
   end loop;
 end $$;
 
+-- ---------- highlights, notes and pen marks (added for v12) ----------
+-- One row per mark. data holds the mark as the app keeps it (words and their
+-- place, colour, note, pen strokes); at is when it last changed on a device.
+create table if not exists public.vanchan_marks (
+  user_id    uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  id         text not null check (length(id) between 4 and 40),
+  book_key   text not null check (book_key ~ '^[0-9a-f]{64}$'),
+  kind       text not null check (kind in ('text', 'cardnote', 'ink-card', 'ink-page')),
+  parser     int not null default 1,              -- card numbers in data are for this parser version
+  data       jsonb not null default '{}'::jsonb,
+  at         bigint not null default 0,
+  deleted    boolean not null default false,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, id)
+);
+create index if not exists vanchan_marks_changed on public.vanchan_marks (user_id, updated_at);
+
+drop trigger if exists vanchan_marks_touch on public.vanchan_marks;
+create trigger vanchan_marks_touch before insert or update on public.vanchan_marks
+  for each row execute function public.vanchan_touch();
+
+alter table public.vanchan_marks enable row level security;
+revoke all on public.vanchan_marks from anon;
+grant select, insert, update, delete on public.vanchan_marks to authenticated;
+drop policy if exists vanchan_marks_own on public.vanchan_marks;
+create policy vanchan_marks_own on public.vanchan_marks for all to authenticated
+  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+
 -- ---------- book files: private bucket, one folder per user ----------
 insert into storage.buckets (id, name, public, file_size_limit)
 values ('vanchan-books', 'vanchan-books', false, 52428800)   -- 50 MB per book

@@ -36,7 +36,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /* ---------- fake Supabase ---------- */
 
 const USER = '6f1c2a5e-0000-4000-8000-000000000001';
-const db = { vanchan_books: [], vanchan_progress: [] }, files = {}, hits = [];
+const db = { vanchan_books: [], vanchan_progress: [], vanchan_marks: [] }, files = {}, hits = [];
+let marksMissing = false, clock = Date.now();
 let tokenN = 0, ttl = 3600, validFrom = 0;
 const liveRefresh = new Set(), reused = [];
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -82,15 +83,21 @@ async function fake(req, res, url) {
   if (!uid) return send(res, 401, { message: 'no token' });
   if (tokenNo(req) < validFrom) return send(res, 401, { message: 'JWT expired' });
   let m;
-  if ((m = p.match(/^\/rest\/v1\/(vanchan_books|vanchan_progress)$/))) {
+  if (marksMissing && /vanchan_marks/.test(p)) return send(res, 404, { code: 'PGRST205', message: "Could not find the table 'public.vanchan_marks'" });
+  if ((m = p.match(/^\/rest\/v1\/(vanchan_books|vanchan_progress|vanchan_marks)$/))) {
     const t = db[m[1]];
-    if (req.method === 'GET') return send(res, 200, t.filter((r) => r.user_id === uid));
+    if (req.method === 'GET') {
+      const since = (url.searchParams.get('updated_at') || '').replace(/^gte\./, '');
+      return send(res, 200, t.filter((r) => r.user_id === uid && (!since || (r.updated_at || '') >= since)));
+    }
     if (req.method === 'POST') {
       const rows = JSON.parse((await body(req)).toString());
       for (const r of [].concat(rows)) {
         if (r.user_id !== uid) return send(res, 403, { message: 'row-level security' });   // like RLS
-        const at = t.findIndex((x) => x.user_id === uid && x.book_key === r.book_key);
-        if (at >= 0) Object.assign(t[at], r); else t.push(Object.assign({}, r));
+        const same = (x) => x.user_id === uid && (m[1] === 'vanchan_marks' ? x.id === r.id : x.book_key === r.book_key);
+        const at = t.findIndex(same);
+        const row = Object.assign({}, r, { updated_at: new Date(++clock).toISOString() });   // like the trigger
+        if (at >= 0) Object.assign(t[at], row); else t.push(row);
       }
       return send(res, 201, null);
     }
@@ -270,6 +277,48 @@ async function device(browser, name) {
     await syncNow(A); await sleep(500);
     const savedA2 = await savedTitles(A);
     check('a card saved offline on B shows on A once B is back online', savedA2.length === 2 && savedA2.some((t) => sameCard(t, savedOnB)), [savedA2, savedOnB]);
+
+    /* ---------- highlights, notes and pen marks cross over ---------- */
+    const selectFirstWords = (pg) => pg.evaluate((c) => {
+      const p = document.querySelector(c + ' .text p'); const w = document.createTreeWalker(p, 4); const n = w.nextNode();
+      const r = document.createRange(); r.setStart(n, 0); r.setEnd(n, Math.min(n.nodeValue.length, 14));
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); document.dispatchEvent(new Event('selectionchange'));
+      return sel.toString().trim();
+    }, cur);
+    const marksOf = (pg) => pg.evaluate(() => new Promise((res) => { const rq = indexedDB.open('vanchan'); rq.onsuccess = () => { const g = rq.result.transaction('marks').objectStore('marks').getAll(); g.onsuccess = () => { rq.result.close(); res(g.result); }; }; }));
+    // A: a highlight with a typed note, and a pen stroke on the card
+    let words = '';
+    for (let i = 0; i < 6 && !(words = await selectFirstWords(A)); i++) await next(A);
+    await sleep(400);
+    await tap(A, '#selNote'); await sleep(400);
+    await A.evaluate(() => document.querySelector('#noteTabs [data-v="type"]').click());
+    await A.type('#noteText', 'note from A');
+    await A.evaluate(() => document.getElementById('noteSave').click()); await sleep(500);
+    await A.evaluate((c) => document.querySelector(c + ' .foot .icon-btn[aria-label="Pen"]').click(), cur); await sleep(500);
+    const box = await (await A.$(cur + ' .ink-layer.live')).boundingBox();
+    await A.mouse.move(box.x + 20, box.y + 30); await A.mouse.down(); await A.mouse.move(box.x + 120, box.y + 40, { steps: 5 }); await A.mouse.up(); await sleep(300);
+    await A.evaluate((c) => document.querySelector(c + ' .pen-done').click(), cur); await sleep(400);
+    await syncNow(A);
+    check('marks reach Supabase (highlight with note, pen marks)', db.vanchan_marks.filter((r) => !r.deleted).length === 2, db.vanchan_marks.map((r) => r.kind));
+    await syncNow(Bd); await sleep(400);
+    const mB = (await marksOf(Bd)).filter((m) => !m.del);
+    const hB = mB.find((m) => m.type === 'text'), iB = mB.find((m) => m.type === 'ink-card');
+    check('B gets the highlight, its note and the pen marks', hB && hB.q === words && hB.note && hB.note.text === 'note from A' && iB && iB.strokes.length === 1, mB.map((m) => m.type + ':' + (m.q || '')));
+    // B removes the highlight; A loses it too
+    await tap(Bd, '#btnSaved'); await Bd.evaluate(() => document.querySelector('#savedTabs [data-v="marks"]').click()); await sleep(300);
+    await Bd.evaluate(() => Array.from(document.querySelectorAll('#marksList .mark-item')).find((b) => /“/.test(b.innerText)).click()); await sleep(800);
+    await Bd.evaluate((c) => document.querySelector(c + ' .text .hl').click(), cur); await sleep(300);
+    await Bd.evaluate(() => document.getElementById('mbRemove').click()); await sleep(400);
+    await syncNow(Bd); await syncNow(A); await sleep(400);
+    const mA = (await marksOf(A)).filter((m) => m.type === 'text');
+    check('removing the highlight on B removes it on A', mA.length && mA.every((m) => m.del) && !(await A.evaluate((c) => document.querySelector(c + ' .text .hl'), cur)), mA.map((m) => m.del));
+    // without the marks table: the rest still syncs, and Settings says why
+    marksMissing = true;
+    await syncNow(A);
+    const stM = await status(A);
+    check('without the marks table, sync still works and says the database needs updating', !stM.error && stM.marksMissing, stM);
+    marksMissing = false;
+    await syncNow(A);
 
     /* ---------- rename and delete everywhere ---------- */
     await tap(A, '#btnLib');

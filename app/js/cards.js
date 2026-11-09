@@ -57,17 +57,25 @@
     });
 
     blocks.forEach(function (b) {
+      // the book's printed index: a card of its own, in its place in the book
+      if (b.t === 'index') {
+        cur = null; heads = [];
+        cards.push({ kind: 'index', ch: '', k: '', t: b.title || 'Contents', idx: b.sections, p: [], locs: [locOf(b)] });
+        return;
+      }
       var text = (b.text || '').replace(/\s+/g, ' ').trim();
       if (!text) return;
       if (/^(\S{1,2})( \1)+$/.test(text)) return;   // an ornament line: "v v v", "∗ ∗ ∗"
       if (b.t === 'h') {
         if (!hasWords(text) && !isKicker(text)) return;
         cur = null;
-        heads.push({ text: text, level: b.level || 2, loc: locOf(b) });
+        heads.push({ text: text, level: b.level || 2, loc: locOf(b), an: b.anchor });
         return;
       }
       if (!cur) {
         var title = '', kicker = '', headLoc = null;
+        // the EPUB heading ids that lead to this card, for the book's index
+        var an = heads.map(function (h) { return h.an; }).filter(Boolean);
         if (heads.length) {
           headLoc = heads[heads.length - 1].loc;
           // The last heading is the sub-topic. Before it: a level-1 heading
@@ -86,6 +94,7 @@
           heads = [];
         }
         cur = { ch: chapter, k: kicker, t: title, p: [], locs: [], head: headLoc };
+        if (an.length) cur.an = an;
         // a sub-topic heading too long for a title opens the card in bold
         if (b.lead && !title) cur.lead = true;
         cards.push(cur);
@@ -133,7 +142,7 @@
       }
       parts.forEach(function (ix, i) {
         var ps = ix.map(function (k) { return c.p[k]; });
-        final.push(place({ ch: c.ch, k: c.k, t: c.t, num: c.num, p: ps, g: g, part: parts.length > 1 ? [i + 1, parts.length] : null, lead: i === 0 && lead,
+        final.push(place({ ch: c.ch, k: c.k, t: c.t, num: c.num, p: ps, g: g, part: parts.length > 1 ? [i + 1, parts.length] : null, lead: i === 0 && lead, an: i === 0 ? c.an : undefined,
           w: ps.reduce(function (s, p) { return s + words(p); }, 0) }, i === 0 ? c.head : null, ix.map(function (k) { return c.locs[k]; })));
       });
     });
@@ -142,6 +151,7 @@
     var all = final.map(function (c) { return c.p.join(' '); }).join(' ');
     var guj = gujaratiShare(all) > 0.5;
     final = final.filter(function (c) {
+      if (c.kind === 'index') return true;
       var body = c.p.join(' ');
       if (c.w < 12 && !c.num) return false;
       if (guj && gujaratiShare(body) < 0.4) return false;
@@ -157,7 +167,41 @@
     return m ? { who: m[1], rest: p.slice(m[0].length) } : null;
   }
 
-  var api = { build: build, splitSpeaker: splitSpeaker, words: words };
+  // The card a printed-index entry points at. EPUB entries name a heading
+  // (e.a); PDF entries a printed page (e.p), mapped to the PDF page through
+  // labels, where the card whose title matches best wins.
+  function plainTitle(s) { return (s || '').replace(/[\s.,!?:;'"‘’“”…()\[\]\-–—]+/g, '').toLowerCase(); }
+  function toNumber(d) { return parseInt(String(d).replace(/[૦-૯]/g, function (x) { return '૦૧૨૩૪૫૬૭૮૯'.indexOf(x); }), 10); }
+
+  function indexTarget(bookCards, labels, e) {
+    var cards = bookCards.filter(function (c) { return c.kind !== 'index'; });
+    var want = plainTitle(e.t);
+    function byTitle(list) {
+      var exact = list.filter(function (c) { return plainTitle(c.t) === want || plainTitle(c.k) === want; })[0];
+      if (exact || want.length <= 3) return exact;
+      return list.filter(function (c) {
+        var t = plainTitle(c.t);
+        return t.length > 3 && (t.indexOf(want) >= 0 || want.indexOf(t) >= 0);
+      })[0];
+    }
+    if (e.a) {
+      var file = e.a.split('#')[0];
+      return cards.filter(function (c) { return (c.an || []).indexOf(e.a) >= 0; })[0] || byTitle(cards) ||
+        cards.filter(function (c) { return (c.an || []).some(function (a) { return a.split('#')[0] === file; }); })[0];
+    }
+    if (e.p) {
+      var n = toNumber(e.p), P = 0;
+      (labels || []).some(function (l, i) { if (l && toNumber(l) === n) { P = i + 1; return true; } return false; });
+      if (P) {
+        var here = cards.filter(function (c) { return c.pg && c.pg <= P && (c.pe || c.pg) >= P; });
+        return byTitle(here) || here.filter(function (c) { return c.pg === P; })[0] || here[0] ||
+          cards.filter(function (c) { return c.pg >= P; })[0];
+      }
+    }
+    return byTitle(cards);
+  }
+
+  var api = { build: build, splitSpeaker: splitSpeaker, words: words, indexTarget: indexTarget };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Cards = api;
 })(this);

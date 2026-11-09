@@ -73,10 +73,10 @@ function serve() {
   // A * marks a lit button.
   const footState = () => page.evaluate((c) => Array.from(document.querySelectorAll(c + ' .foot .icon-btn')).map((b) => {
     const d = (b.querySelector('path') || {}).getAttribute ? b.querySelector('path').getAttribute('d') : '';
-    const kind = /^M7 4h10/.test(d) ? 'save' : /^M4 7h3/.test(d) ? 'shuffle' : /^M12 3v12/.test(d) ? 'share' : b.querySelector('circle') ? 'more' : '?';
+    const kind = /^M7 4h10/.test(d) ? 'save' : /^M4 7h3/.test(d) ? 'shuffle' : /^M12 3v12/.test(d) ? 'share' : /^M4 20h4/.test(d) ? 'pen' : b.querySelector('circle') ? 'more' : '?';
     return kind + (b.classList.contains('on') ? '*' : '') + ':' + b.getAttribute('aria-label');
   }), cur);
-  const LABELS = { save: 'Save card', 'save*': 'Remove from saved', shuffle: 'Back to random cards', share: 'Share', more: 'More' };
+  const LABELS = { save: 'Save card', 'save*': 'Remove from saved', shuffle: 'Back to random cards', share: 'Share', more: 'More', pen: 'Pen' };
   // every button has its own label, and only the bookmark is lit (when saved)
   const footOk = (f, saved) => f.every((x) => { const [k, l] = x.split(':'); return LABELS[k] === l; }) &&
     f.filter((x) => x.indexOf('*') >= 0).join() === (saved ? 'save*:Remove from saved' : '');

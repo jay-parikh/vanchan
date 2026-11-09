@@ -22,6 +22,11 @@
     page: svg('<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>'),
     toc: svg('<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>'),
     search: svg('<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/>'),
+    pen: svg('<path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/>'),
+    marker: svg('<path d="m9 15 6-6 3 3-6 6H9v-3Z"/><path d="M4 21h8"/>'),
+    eraser: svg('<path d="m7 21-4-4L14 6l6 6-9 9H7Z"/><path d="M11 21h9"/>'),
+    undo: svg('<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>'),
+    note: svg('<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>'),
     shuffle: svg('<path d="M4 7h3c4 0 6 10 10 10h3M4 17h3c1.6 0 2.8-1.6 3.9-3.6M13.1 9.6C14.2 8.1 15.3 7 17 7h3"/><path d="m18 4 3 3-3 3M18 14l3 3-3 3"/>')
   };
 
@@ -33,7 +38,9 @@
     read: new Set(), marks: [], hidden: new Set(),
     settings: { fs: 18, font: 'serif', theme: 'auto', order: 'random' },
     shownAt: 0, swiped: false, sheets: [], menuCard: null, busy: false,
-    els: { prev: null, cur: null, next: null }
+    els: { prev: null, cur: null, next: null },
+    // highlights, notes and pen marks (marks.js): all by id, and indexes
+    mk: { all: {}, byCard: {}, byPage: {} }, inking: null, savedTab: 'cards'
   };
 
   const store = {
@@ -101,7 +108,9 @@
   function scopeIds(scope) {
     const books = scope === 'all' ? S.books : S.books.filter((b) => b.id === scope);
     const ids = [];
-    books.forEach((b) => (S.byBook[b.id] || []).forEach((c) => { if (!S.hidden.has(c.id)) ids.push(c.id); }));
+    // the book's printed index is for reading in book order, not a random card
+    const random = S.settings.order !== 'book';
+    books.forEach((b) => (S.byBook[b.id] || []).forEach((c) => { if (!S.hidden.has(c.id) && !(random && c.kind === 'index')) ids.push(c.id); }));
     return ids;
   }
 
@@ -185,7 +194,7 @@
   function buildCard(id, index) {
     const c = S.cards[id], book = S.bookById[c.b];
     // a short card (one saying) is set larger and centred, like a quote
-    const card = el('article', 'card' + (c.w <= 60 ? ' short' : ''));
+    const card = el('article', 'card' + (c.w <= 60 && c.kind !== 'index' ? ' short' : ''));
     card.dataset.id = id;
 
     const band = el('div', 'band');
@@ -238,9 +247,11 @@
     }
     if (c.num) body.appendChild(el('div', 'num', c.num));
     if (c.t) body.appendChild(el('h2', 'title', c.t));
+    if (c.kind === 'index') body.appendChild(indexList(c, book));
     const text = el('div', 'text');
     c.p.forEach((p, i) => {
       const para = el('p', i === 0 && c.lead ? 'lead' : '');
+      para.dataset.i = i;
       const sp = Cards.splitSpeaker(p);
       if (sp) {
         para.appendChild(el('b', '', sp.who + ' :'));
@@ -249,9 +260,18 @@
       text.appendChild(para);
     });
     body.appendChild(text);
+    drawTextMarks(id, text);
+    const cardNote = marksOfCard(id).find((m) => m.type === 'cardnote');
+    if (cardNote) body.appendChild(noteStrip(cardNote));
     body.appendChild(el('div', 'body-end'));
     if (S.hl && S.hl.id === id) markWords(body, S.hl.words);
     card.appendChild(body);
+    // pen marks over the card: the card keeps the layout they were drawn at
+    const ink = marksOfCard(id).find((m) => m.type === 'ink-card');
+    const inking = S.inking && S.inking.id === id;
+    if (ink || inking) lockLayout(card, body, inking ? S.inking.layout : ink.layout);
+
+    if (inking) { card.classList.add('inking'); card.appendChild(penBar(S.inking, () => exitPen())); return card; }
 
     const foot = el('footer', 'foot');
     const pos = el('span', 'pos');
@@ -263,11 +283,545 @@
     foot.appendChild(pos);
     const saved = S.marks.indexOf(id) >= 0;
     if (S.settings.order === 'book') foot.appendChild(iconButton(ICON.shuffle, 'Back to random cards', backToRandom));
+    if (c.kind !== 'index') foot.appendChild(iconButton(ICON.pen, 'Pen', () => enterPen(id), 'pen'));
     foot.appendChild(iconButton(ICON.save, saved ? 'Remove from saved' : 'Save card', () => toggleMark(id), saved ? 'save on' : 'save'));
     foot.appendChild(iconButton(ICON.share, 'Share', () => shareCard(id)));
     foot.appendChild(iconButton(ICON.more, 'More', () => openMenu(id)));
     card.appendChild(foot);
     return card;
+  }
+
+  /* ---------- marks: highlights, notes, pen ---------- */
+
+  const PEN_COLORS = ['#1E1A16', '#2F6FD6', '#C8382B'];
+  const lastColor = () => store.get('hlColor', 'yellow');
+  const penColor = () => store.get('penColor', '#2F6FD6');
+
+  function indexMarks() {
+    const byCard = {}, byPage = {};
+    Object.keys(S.mk.all).forEach((k) => {
+      const m = S.mk.all[k];
+      if (m.del || m.lost || !S.bookById[m.b]) return;
+      if (m.type === 'ink-page') (byPage[m.b] = byPage[m.b] || {})[m.pg] = m;
+      else (byCard[m.b + ':' + m.n] = byCard[m.b + ':' + m.n] || []).push(m);
+    });
+    S.mk.byCard = byCard; S.mk.byPage = byPage;
+  }
+
+  const marksOfCard = (id) => S.mk.byCard[id] || [];
+
+  function saveMark(m) {
+    m.at = Date.now();
+    S.mk.all[m.id] = m;
+    indexMarks();
+    DB.put('marks', m).catch(() => toast('Could not save'));
+    Sync.markChanged(m);
+  }
+
+  // kept as "deleted", so the deletion reaches other devices
+  function removeMark(m) {
+    m.del = true;
+    delete m.note; delete m.strokes;
+    saveMark(m);
+  }
+
+  function newMark(type, bookId, extra) {
+    const b = S.bookById[bookId];
+    return Object.assign({ id: Marks.newId(), b: bookId, key: b && b.key, type }, extra);
+  }
+
+  const groupOf = (m) => (m.grp ? Object.keys(S.mk.all).map((k) => S.mk.all[k]).filter((x) => x.grp === m.grp && !x.del) : [m]);
+
+  // highlights and underlines into a card's paragraphs
+  function drawTextMarks(cardId, textEl) {
+    const marks = marksOfCard(cardId).filter((m) => m.type === 'text');
+    if (!marks.length) return;
+    textEl.querySelectorAll('p').forEach((para) => {
+      const i = +para.dataset.i, len = para.textContent.length;
+      const here = marks.filter((m) => m.p === i && m.e <= len && m.s < m.e).sort((a, b) => a.s - b.s);
+      const ranges = [];
+      let end = -1;
+      here.forEach((m) => {
+        if (m.s < end) return;      // overlapping: the first one shows
+        end = m.e;
+        ranges.push({ s: m.s, e: m.e, make: () => {
+          const sp = el('span', 'hl' + (m.color ? ' hl-' + m.color : '') + (m.ul ? ' ul' : ''));
+          sp.dataset.mark = m.id;
+          return sp;
+        } });
+      });
+      Marks.wrapRanges(para, ranges);
+      // a small note button after the last piece of a mark that has a note
+      here.forEach((m) => {
+        const g = groupOf(m), noted = g.find((x) => x.note);
+        if (!noted || m !== g[g.length - 1]) return;
+        const parts = para.querySelectorAll('[data-mark="' + m.id + '"]');
+        if (!parts.length) return;
+        const b = el('button', 'note-dot');
+        b.innerHTML = ICON.pen;
+        b.setAttribute('aria-label', 'Read note');
+        b.onclick = (e) => { e.stopPropagation(); openNote({ mark: noted }); };
+        parts[parts.length - 1].after(b);
+      });
+    });
+  }
+
+  function noteStrip(m) {
+    const b = el('button', 'card-note');
+    b.innerHTML = ICON.note;
+    const words = el('span', 'card-note-words');
+    words.appendChild(el('span', 'card-note-label', 'My note on this card'));
+    if (m.note && m.note.text) words.appendChild(el('span', 'card-note-text', m.note.text));
+    if (m.note && m.note.ink && m.note.ink.length) {
+      const img = el('img', 'card-note-ink');
+      img.alt = 'Hand-written note';
+      img.src = Ink.thumbnail(m.note.ink, m.note.aspect || 0.8, 240);
+      // the card grew: draw its pen layer to the new height
+      img.onload = () => { const card = img.closest('.card'); if (card && !(S.inking && S.inking.id === card.dataset.id)) fitLock(card); };
+      words.appendChild(img);
+    }
+    b.appendChild(words);
+    b.onclick = (e) => { e.stopPropagation(); openNote({ mark: m }); };
+    return b;
+  }
+
+  /* ---------- pen on a card ---------- */
+
+  // A card with pen marks shows at the text size, font and width they were
+  // drawn at (scaled to fit), so the marks stay on their words.
+  function lockLayout(card, body, layout) {
+    const lock = el('div', 'lock');
+    while (body.firstChild) lock.appendChild(body.firstChild);
+    body.appendChild(lock);
+    lock.style.setProperty('--fs', layout.fs + 'px');
+    lock.style.setProperty('--read-font', layout.font === 'sans' ? 'var(--gu-sans)' : 'var(--gu-serif)');
+    lock.style.width = layout.w + 'px';
+    lock.dataset.w = layout.w;
+    const cv = el('canvas', 'ink-layer');
+    cv.setAttribute('aria-hidden', 'true');
+    lock.appendChild(cv);
+    card.classList.add('locked');
+  }
+
+  // after the card is on the page: scale the locked layout to the card, then draw its pen marks
+  function fitLock(card) {
+    const lock = card.querySelector('.lock');
+    if (!lock) return;
+    const body = card.querySelector('.body');
+    const cs = getComputedStyle(body);
+    const avail = body.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const w = +lock.dataset.w;
+    // shrinks to fit a narrower card; on a wider one it keeps (about) its drawn size
+    lock.style.zoom = avail > 0 && w > 0 ? String(Math.min(1.15, avail / w)) : '1';
+    const ink = marksOfCard(card.dataset.id).find((m) => m.type === 'ink-card');
+    const strokes = S.inking && S.inking.id === card.dataset.id ? null : (ink ? ink.strokes : []);
+    if (strokes) Ink.paint(lock.querySelector('.ink-layer'), strokes, w, lock.scrollHeight);
+  }
+
+  function enterPen(id) {
+    const card = S.els.cur;
+    if (!card || card.dataset.id !== id) return;
+    const ink = marksOfCard(id).find((m) => m.type === 'ink-card');
+    let layout = ink && ink.layout;
+    if (!layout) {
+      const body = card.querySelector('.body'), cs = getComputedStyle(body);
+      layout = { fs: S.settings.fs, font: S.settings.font, w: Math.round(body.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)) };
+    }
+    S.inking = { id, layout, tool: { t: 'p', c: penColor() }, mark: ink || null };
+    hideBars();
+    render();
+  }
+
+  function startCardPen(card) {
+    const lock = card.querySelector('.lock'), cv = lock && lock.querySelector('.ink-layer');
+    if (!cv) return;
+    const body = card.querySelector('.body');
+    const ink = S.inking.mark;
+    cv.classList.add('live');
+    const surf = Ink.surface(cv, {
+      strokes: ink ? ink.strokes : [],
+      size: () => [S.inking.layout.w, lock.scrollHeight],
+      tool: () => S.inking.tool,
+      onScroll: (dy) => { body.scrollTop += dy; },
+      onChange: (strokes) => {
+        let m = S.inking.mark;
+        if (!strokes.length) { if (m) removeMark(m); S.inking.mark = null; return; }
+        if (!m || m.del) m = S.inking.mark = newMark('ink-card', S.cards[S.inking.id].b, { n: S.cards[S.inking.id].n, layout: S.inking.layout });
+        m.strokes = strokes;
+        saveMark(m);
+        updatePenBar();
+      }
+    });
+    S.inking.surface = surf;
+    updatePenBar();
+  }
+
+  function exitPen() {
+    if (S.inking && S.inking.surface) S.inking.surface.destroy();
+    S.inking = null;
+    render();
+  }
+
+  // Pen · Highlight · Eraser · Undo · Done; tap Pen again for its colours
+  function penBar(state, done) {
+    const bar = el('div', 'pen-bar');
+    bar.setAttribute('role', 'toolbar');
+    bar.setAttribute('aria-label', 'Pen tools');
+    const tool = (name, icon, label, pick) => {
+      const b = el('button', 'pen-tool');
+      b.dataset.tool = name;
+      b.innerHTML = icon;
+      b.appendChild(el('span', '', label));
+      b.setAttribute('aria-label', label);
+      b.onclick = (e) => { e.stopPropagation(); pick(b); };
+      return b;
+    };
+    const pop = el('div', 'pen-colors');
+    pop.hidden = true;
+    PEN_COLORS.forEach((c) => {
+      const d = el('button', 'pen-color');
+      d.style.setProperty('--c', c);
+      d.setAttribute('aria-label', 'Pen colour');
+      d.dataset.c = c;
+      d.onclick = (e) => { e.stopPropagation(); state.tool = { t: 'p', c }; store.set('penColor', c); pop.hidden = true; updatePenBar(); };
+      pop.appendChild(d);
+    });
+    bar.appendChild(pop);
+    bar.appendChild(tool('p', ICON.pen, 'Pen', () => {
+      if (state.tool.t === 'p') pop.hidden = !pop.hidden;
+      else { state.tool = { t: 'p', c: penColor() }; pop.hidden = true; }
+      updatePenBar();
+    }));
+    bar.appendChild(tool('h', ICON.marker, 'Highlight', () => { state.tool = { t: 'h' }; pop.hidden = true; updatePenBar(); }));
+    bar.appendChild(tool('e', ICON.eraser, 'Eraser', () => { state.tool = { t: 'e' }; pop.hidden = true; updatePenBar(); }));
+    bar.appendChild(tool('u', ICON.undo, 'Undo', () => { if (state.surface) state.surface.undo(); updatePenBar(); }));
+    const d = el('button', 'primary pen-done', 'Done');
+    d.onclick = (e) => { e.stopPropagation(); done(); };
+    bar.appendChild(d);
+    return bar;
+  }
+
+  function updatePenBar() {
+    document.querySelectorAll('.pen-bar').forEach((bar) => {
+      const st = bar.closest('.viewer') ? V.pen : S.inking;
+      if (!st) return;
+      bar.querySelectorAll('.pen-tool').forEach((b) => {
+        const t = b.dataset.tool;
+        b.classList.toggle('on', t === st.tool.t);
+        if (t === 'p') b.style.color = st.tool.t === 'p' ? st.tool.c : '';
+        if (t === 'u') b.disabled = !(st.surface && st.surface.canUndo());
+      });
+      bar.querySelectorAll('.pen-color').forEach((d) => d.classList.toggle('on', d.dataset.c === penColor()));
+    });
+  }
+
+  /* ---------- selecting words ---------- */
+
+  function hasSelection() {
+    const sel = window.getSelection && window.getSelection();
+    return !!(sel && !sel.isCollapsed && sel.rangeCount && S.els.cur && S.els.cur.contains(sel.anchorNode));
+  }
+
+  function hideBars() {
+    const a = $('selBar'), b = $('markBar');
+    if (a) a.hidden = true;
+    if (b) b.hidden = true;
+    S.editing = null;
+  }
+
+  function placeBar(bar, rect) {
+    bar.hidden = false;
+    const w = bar.offsetWidth, h = bar.offsetHeight, vw = window.innerWidth, vh = window.innerHeight;
+    let top = rect.bottom + 10;
+    if (top + h > vh - 8) top = Math.max(8, rect.top - h - 10);
+    bar.style.top = top + 'px';
+    bar.style.left = Math.max(8, Math.min(vw - w - 8, rect.left + rect.width / 2 - w / 2)) + 'px';
+  }
+
+  // the paragraphs a selection covers, with offsets in each one's text
+  function selectionParts() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !S.els.cur) return null;
+    const range = sel.getRangeAt(0), text = S.els.cur.querySelector('.text');
+    if (!text || !text.contains(range.commonAncestorContainer) && range.commonAncestorContainer !== text) return null;
+    const paras = Array.from(text.querySelectorAll('p')).filter((p) => range.intersectsNode(p));
+    const parts = [];
+    paras.forEach((p) => {
+      const t = p.textContent;
+      let s = p.contains(range.startContainer) ? Marks.offsetIn(p, range.startContainer, range.startOffset) : 0;
+      let e = p.contains(range.endContainer) ? Marks.offsetIn(p, range.endContainer, range.endOffset) : t.length;
+      while (s < e && /\s/.test(t[s])) s++;
+      while (e > s && /\s/.test(t[e - 1])) e--;
+      if (e > s) parts.push({ p: +p.dataset.i, s, e, text: t });
+    });
+    return parts.length ? parts : null;
+  }
+
+  function onSelection() {
+    if (S.inking || S.editing) return;
+    const bar = $('selBar');
+    if (!hasSelection() || !selectionParts()) { bar.hidden = true; return; }
+    $('selDot').style.background = Marks.DOTS[lastColor()];
+    placeBar(bar, window.getSelection().getRangeAt(0).getBoundingClientRect());
+  }
+
+  // makes marks of the selected words; overlapping marks are taken in (their note kept)
+  function markSelection(color) {
+    const parts = selectionParts();
+    if (!parts) return null;
+    const id = S.els.cur.dataset.id, c = S.cards[id];
+    const grp = parts.length > 1 ? Marks.newId() : null;
+    let keptNote = null;
+    const made = parts.map((pt) => {
+      let s = pt.s, e = pt.e;
+      marksOfCard(id).filter((m) => m.type === 'text' && m.p === pt.p && m.s < e && m.e > s).forEach((m) => {
+        s = Math.min(s, m.s); e = Math.max(e, m.e);
+        if (m.note && !keptNote) keptNote = m.note;
+        removeMark(m);
+      });
+      return newMark('text', c.b, Object.assign({ n: c.n, p: pt.p, s, e, color, ul: false }, Marks.context(pt.text, s, e), grp ? { grp } : {}));
+    });
+    if (keptNote) made[made.length - 1].note = keptNote;
+    made.forEach(saveMark);
+    window.getSelection().removeAllRanges();
+    hideBars();
+    render();
+    return made[made.length - 1];
+  }
+
+  // tapping a highlight: colours, underline, note, remove
+  function editMark(m, rect) {
+    window.getSelection().removeAllRanges();
+    $('selBar').hidden = true;
+    S.editing = m;
+    const bar = $('markBar');
+    bar.querySelectorAll('.mb-color').forEach((d) => d.classList.toggle('on', d.dataset.c === m.color));
+    $('mbUnder').classList.toggle('on', !!m.ul);
+    placeBar(bar, rect);
+  }
+
+  function changeGroup(m, fn) {
+    groupOf(m).forEach((x) => { fn(x); saveMark(x); });
+    hideBars();
+    render();
+  }
+
+  function setupMarking() {
+    document.addEventListener('selectionchange', debounce(onSelection, 150));
+    $('selHighlight').onclick = () => markSelection(lastColor());
+    $('selNote').onclick = () => { const m = markSelection(lastColor()); if (m) openNote({ mark: m }); };
+    $('markBar').querySelectorAll('.mb-color').forEach((d) => {
+      d.onclick = () => {
+        const m = S.editing;
+        if (!m) return;
+        const c = d.dataset.c;
+        store.set('hlColor', c);
+        // the colour it already has, with an underline: underline only
+        changeGroup(m, (x) => { x.color = x.color === c && x.ul ? null : c; });
+      };
+    });
+    $('mbUnder').onclick = () => {
+      const m = S.editing;
+      if (!m) return;
+      if (m.ul && !m.color) changeGroup(m, (x) => { x.ul = false; x.del = true; });
+      else changeGroup(m, (x) => { x.ul = !x.ul; });
+    };
+    $('mbNote').onclick = () => { const m = S.editing; hideBars(); if (m) openNote({ mark: groupOf(m).find((x) => x.note) || groupOf(m).slice(-1)[0] }); };
+    $('mbRemove').onclick = () => { const m = S.editing; if (m) { groupOf(m).forEach(removeMark); hideBars(); render(); toast('Highlight removed'); } };
+    // a tap on a highlight opens its bar; a tap elsewhere closes the bars
+    $('stack').addEventListener('click', (e) => {
+      const sp = e.target.closest && e.target.closest('.hl');
+      if (sp && !hasSelection() && !S.inking) {
+        const m = S.mk.all[sp.dataset.mark];
+        if (m) { e.stopPropagation(); editMark(m, sp.getBoundingClientRect()); return; }
+      }
+      if (!e.target.closest('#markBar')) { $('markBar').hidden = true; S.editing = null; }
+    });
+    document.addEventListener('scroll', () => hideBars(), true);
+    setupNoteSheet();
+    setupPagePen();
+  }
+
+  /* ---------- the note sheet: type it or write it by hand ---------- */
+
+  const NOTE = { target: null, mode: 'type', surface: null, ink: [] };
+
+  // target: { mark } (words or a card note) or { cardId } (new card note)
+  function openNote(target) {
+    let m = target.mark;
+    if (!m && target.cardId) m = marksOfCard(target.cardId).find((x) => x.type === 'cardnote');
+    const cardId = m ? m.b + ':' + m.n : target.cardId, c = S.cards[cardId], book = c && S.bookById[c.b];
+    NOTE.target = { mark: m || null, cardId };
+    const note = (m && m.note) || {};
+    $('noteQuote').textContent = m && m.type === 'text'
+      ? '“' + groupOf(m).map((x) => x.q).join(' … ') + '”' + (book ? ' · ' + pageText(c, book) : '')
+      : (c ? (c.t || cardLabel(c)) + ' · ' + (book ? book.title : '') : '');
+    $('noteBar').style.background = m && m.type === 'text' && m.color ? Marks.DOTS[m.color] : 'var(--line)';
+    $('noteText').value = note.text || '';
+    NOTE.ink = note.ink || [];
+    NOTE.mode = note.ink && note.ink.length && !note.text ? 'write' : note.text ? 'type' : store.get('noteMode', 'type');
+    $('noteDelete').hidden = !(m && (m.note || m.type === 'cardnote'));
+    openSheet('sheetNote');
+    showNoteMode();
+  }
+
+  function showNoteMode() {
+    const w = NOTE.mode === 'write';
+    $('noteTabs').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === NOTE.mode));
+    $('noteText').hidden = w;
+    $('notePad').hidden = !w;
+    $('noteTools').hidden = !w;
+    if (NOTE.surface) { NOTE.ink = NOTE.surface.strokes(); NOTE.surface.destroy(); NOTE.surface = null; }
+    if (w) {
+      const pad = $('notePad'), cv = $('noteInk');
+      NOTE.tool = NOTE.tool && NOTE.tool.t === 'e' ? NOTE.tool : { t: 'p', c: penColor() };
+      requestAnimationFrame(() => {
+        NOTE.surface = Ink.surface(cv, {
+          strokes: NOTE.ink,
+          size: () => [pad.clientWidth, pad.clientHeight],
+          tool: () => NOTE.tool,
+          onChange: (strokes) => { NOTE.ink = strokes; noteTools(); }
+        });
+        noteTools();
+      });
+    }
+  }
+
+  function noteTools() {
+    $('notePen').classList.toggle('on', NOTE.tool.t === 'p');
+    $('noteEraser').classList.toggle('on', NOTE.tool.t === 'e');
+    $('noteUndo').disabled = !(NOTE.surface && NOTE.surface.canUndo());
+  }
+
+  function saveNote() {
+    if (NOTE.surface) NOTE.ink = NOTE.surface.strokes();
+    const text = $('noteText').value.trim(), pad = $('notePad');
+    const note = {};
+    if (text) note.text = text;
+    if (NOTE.ink.length) { note.ink = NOTE.ink; note.aspect = pad.clientHeight / (pad.clientWidth || 1) || 0.8; }
+    const t = NOTE.target;
+    let m = t.mark;
+    const empty = !note.text && !note.ink;
+    if (!m) {
+      if (empty) return;
+      const c = S.cards[t.cardId];
+      m = newMark('cardnote', c.b, { n: c.n });
+    }
+    if (empty) { if (m.type === 'cardnote') removeMark(m); else { delete m.note; saveMark(m); } }
+    else { m.note = note; saveMark(m); }
+  }
+
+  function setupNoteSheet() {
+    $('noteTabs').querySelectorAll('button').forEach((b) => {
+      b.onclick = () => { NOTE.mode = b.dataset.v; store.set('noteMode', NOTE.mode); showNoteMode(); };
+    });
+    $('notePen').onclick = () => { NOTE.tool = { t: 'p', c: penColor() }; noteTools(); };
+    $('noteEraser').onclick = () => { NOTE.tool = { t: 'e' }; noteTools(); };
+    $('noteUndo').onclick = () => { if (NOTE.surface) NOTE.surface.undo(); noteTools(); };
+    $('noteSave').onclick = () => { saveNote(); closeNote(); };
+    $('noteDelete').onclick = () => {
+      if (!confirm('Delete this note?')) return;
+      $('noteText').value = ''; NOTE.ink = []; if (NOTE.surface) { NOTE.surface.destroy(); NOTE.surface = null; }
+      saveNote(); closeNote(); toast('Note deleted');
+    };
+  }
+
+  function closeNote() {
+    if (NOTE.surface) { NOTE.surface.destroy(); NOTE.surface = null; }
+    closeSheet();
+    render();
+  }
+
+  /* ---------- pen on a PDF page ---------- */
+
+  function pageMark(bookId, pg) { return (S.mk.byPage[bookId] || {})[pg] || null; }
+
+  // the pen layer over the page: shows its marks, and takes the pen while drawing
+  function paintPage() {
+    const cv = $('vCanvas'), ink = $('vInk');
+    if (!cv || cv.hidden) { ink.hidden = true; return; }
+    const w = parseFloat(cv.style.width) || cv.clientWidth, h = cv.clientHeight || (cv.height / cv.width) * w;
+    ink.hidden = false;
+    if (V.pen && V.pen.surface) V.pen.surface.destroy();
+    const m = pageMark(V.book, V.page);
+    if (V.pen) {
+      V.pen.surface = Ink.surface(ink, {
+        strokes: m ? m.strokes : [],
+        size: () => [w, h],
+        tool: () => V.pen.tool,
+        onChange: (strokes) => {
+          let pm = pageMark(V.book, V.page);
+          if (!strokes.length) { if (pm) removeMark(pm); return; }
+          if (!pm) pm = newMark('ink-page', V.book, { pg: V.page });
+          pm.strokes = strokes;
+          saveMark(pm);
+          updatePenBar();
+        }
+      });
+      ink.classList.add('live');
+      updatePenBar();
+    } else {
+      ink.classList.remove('live');
+      ink.style.touchAction = '';
+      Ink.paint(ink, m ? m.strokes : [], w, h);
+    }
+  }
+
+  function setupPagePen() {
+    const bar = penBar({ get tool() { return V.pen ? V.pen.tool : { t: 'p' }; }, set tool(t) { if (V.pen) V.pen.tool = t; }, get surface() { return V.pen && V.pen.surface; } }, () => togglePagePen(false));
+    bar.id = 'vPenBar';
+    bar.hidden = true;
+    $('viewer').appendChild(bar);
+    $('vPen').onclick = () => togglePagePen(!V.pen);
+  }
+
+  function togglePagePen(on) {
+    if (V.pen && V.pen.surface) V.pen.surface.destroy();
+    V.pen = on ? { tool: { t: 'p', c: penColor() } } : null;
+    $('vPen').classList.toggle('on', !!on);
+    $('vPenBar').hidden = !on;
+    paintPage();
+  }
+
+  /* ---------- after a book is read again: marks follow their words ---------- */
+
+  function remapMarks(b, moveN, recs) {
+    const byN = {};
+    recs.forEach((c) => { byN[c.n] = c; });
+    Object.keys(S.mk.all).map((k) => S.mk.all[k]).filter((m) => m.b === b.id && !m.del && m.type !== 'ink-page').forEach((m) => {
+      const n = +moveN(m.n);
+      if (m.type === 'text') {
+        const again = Marks.reanchor(m, byN[n], Cards.splitSpeaker);
+        if (again) Object.assign(m, again); else m.lost = true;   // still listed, with its words
+      } else m.n = n;
+      m.at = Date.now();
+      DB.put('marks', m).catch(() => {});
+      Sync.markChanged(m);
+    });
+    indexMarks();
+  }
+
+  /* ---------- the book's printed index ---------- */
+
+  function indexList(c, book) {
+    const box = el('div', 'index');
+    (c.idx || []).forEach((sec) => {
+      if (sec.h) box.appendChild(el('h3', 'index-h', sec.h));
+      sec.e.forEach((e) => {
+        const b = el('button', 'index-e');
+        b.appendChild(el('span', 'index-t', e.t));
+        if (e.p) b.appendChild(el('span', 'index-p', e.p));
+        b.onclick = (ev) => { ev.stopPropagation(); openIndexEntry(book, e); };
+        box.appendChild(b);
+      });
+    });
+    return box;
+  }
+
+  function openIndexEntry(book, e) {
+    const c = Cards.indexTarget(S.byBook[book.id] || [], book.labels, e);
+    if (!c) { toast('“' + e.t + '” is not among the cards'); return; }
+    readInOrder(c.id);
   }
 
   function buildEnd() {
@@ -310,6 +864,8 @@
   }
 
   function render() {
+    // drawing ends when its card is no longer the one shown (another book, a jump)
+    if (S.inking && S.order[S.pos] !== S.inking.id) { if (S.inking.surface) S.inking.surface.destroy(); S.inking = null; }
     const stack = $('stack');
     stack.textContent = '';
     S.els = { prev: null, cur: null, next: null };
@@ -329,6 +885,10 @@
     stack.appendChild(S.els.cur);
     if (S.els.prev) { S.els.prev.classList.add('under'); rest(S.els.prev, 'prev'); stack.appendChild(S.els.prev); }
     S.shownAt = Date.now();
+    hideBars();
+    renderSides();     // first: the side panels change the card's width
+    [S.els.prev, S.els.cur, S.els.next].forEach((c) => { if (c) fitLock(c); });
+    if (S.inking && S.els.cur && S.els.cur.dataset.id === S.inking.id) startCardPen(S.els.cur);
   }
 
   function rest(card, role) {
@@ -411,7 +971,7 @@
     const stack = $('stack');
     let t = null;
     stack.addEventListener('touchstart', (ev) => {
-      if (S.busy || ev.touches.length !== 1 || !S.els.cur) { t = null; return; }
+      if (S.busy || ev.touches.length !== 1 || !S.els.cur || S.inking || hasSelection()) { t = null; return; }
       const body = S.els.cur.querySelector('.body');
       const p = ev.touches[0];
       t = {
@@ -427,6 +987,7 @@
       const p = ev.touches[0], dx = p.clientX - t.x, dy = p.clientY - t.y;
       if (t.mode === null) {
         if (Math.abs(dy) < 6 && Math.abs(dx) < 6) return;
+        if (hasSelection()) { t.mode = 'none'; return; }   // dragging a selection handle
         if (Math.abs(dx) > Math.abs(dy)) t.mode = 'none';
         else if ((dy < 0 && t.bottom) || (dy > 0 && t.top)) t.mode = 'drag';
         else t.mode = 'scroll';
@@ -471,7 +1032,7 @@
         if (ev.key === 'ArrowLeft') turnPage(-1);
         return;
       }
-      if (S.sheets.length || /input|textarea/i.test((ev.target || {}).tagName || '')) return;
+      if (S.sheets.length || S.inking || /input|textarea/i.test((ev.target || {}).tagName || '')) return;
       if (['ArrowDown', 'ArrowRight', 'j'].indexOf(ev.key) >= 0) { ev.preventDefault(); go(1); }
       if (['ArrowUp', 'ArrowLeft', 'k'].indexOf(ev.key) >= 0) { ev.preventDefault(); go(-1); }
     });
@@ -562,7 +1123,16 @@
     const book = S.bookById[bookId];
     if (!book) return;
     $('tocBook').textContent = book.title;
-    const list = $('tocList');
+    const here = buildToc($('tocList'), bookId, currentId, (c) => { closeAllSheets(); readInOrder(c.id); });
+    openSheet('sheetToc');
+    const body = $('sheetToc').querySelector('.sheet-body');
+    body.scrollTop = 0;
+    if (here) requestAnimationFrame(() => { body.scrollTop = here.offsetTop - body.clientHeight / 3; });
+  }
+
+  // a book's chapters and sub-topics into a list; returns the entry of the current card
+  function buildToc(list, bookId, currentId, pick) {
+    const book = S.bookById[bookId];
     list.textContent = '';
     const cur = currentId && S.cards[currentId];
     let lastCh = null, lastG = null, here = null;
@@ -584,15 +1154,74 @@
       b.appendChild(words);
       const pg = pageText(c, book).replace(/^(PDF )?Pages? /, '').replace(/–.*/, '');
       if (pg) b.appendChild(el('span', 'toc-pg', pg));
-      b.onclick = () => { closeAllSheets(); readInOrder(c.id); };
+      b.onclick = () => pick(c);
+      b.dataset.g = c.g;
       if (cur && cur.g === c.g) { b.classList.add('here'); here = b; }
       li.appendChild(b);
       list.appendChild(li);
     });
-    openSheet('sheetToc');
-    const body = $('sheetToc').querySelector('.sheet-body');
-    body.scrollTop = 0;
-    if (here) requestAnimationFrame(() => { body.scrollTop = here.offsetTop - body.clientHeight / 3; });
+    return here;
+  }
+
+  /* ---------- wide screens: contents on the left, this card's marks on the right ---------- */
+
+  const WIDE = window.matchMedia ? window.matchMedia('(min-width: 1150px)') : { matches: false };
+  let sideBook = null;
+
+  function renderSides() {
+    const left = $('sideToc'), right = $('sideMarks');
+    const id = currentId(), c = id && S.cards[id];
+    const show = WIDE.matches && !!c;
+    left.hidden = right.hidden = !show;
+    $('feed').classList.toggle('wide', show);
+    if (!show) { sideBook = null; return; }
+    // contents: built once per book, then only the current entry moves
+    const list = left.querySelector('ul');
+    if (sideBook !== c.b) {
+      sideBook = c.b;
+      left.querySelector('.side-title').textContent = S.bookById[c.b].title;
+      buildToc(list, c.b, id, (x) => readInOrder(x.id));
+    }
+    list.querySelectorAll('.toc-item.here').forEach((b) => b.classList.remove('here'));
+    const here = list.querySelector('.toc-item[data-g="' + c.g + '"]');
+    if (here) {
+      here.classList.add('here');
+      const top = here.offsetTop - left.clientHeight / 3;
+      if (Math.abs(left.scrollTop - top) > left.clientHeight / 3) left.scrollTop = top;
+    }
+    // this card's highlights, notes and pen marks
+    const box = right.querySelector('.side-list');
+    box.textContent = '';
+    const mine = marksOfCard(id), seen = {};
+    mine.filter((m) => m.type === 'text').sort((a, b) => a.p - b.p || a.s - b.s).forEach((m) => {
+      if (m.grp) { if (seen[m.grp]) return; seen[m.grp] = 1; }
+      const b = el('button', 'side-mark');
+      const bar = el('span', 'mark-bar');
+      bar.style.background = m.color ? Marks.DOTS[m.color] : 'var(--accent)';
+      b.appendChild(bar);
+      const w = el('span', 'mark-words');
+      w.lang = 'gu';
+      w.appendChild(el('span', 'mark-q', '“' + groupOf(m).map((x) => x.q).join(' … ') + '”'));
+      const noted = groupOf(m).find((x) => x.note);
+      if (noted && noted.note.text) w.appendChild(el('span', 'mark-note', '✎ ' + noted.note.text));
+      if (noted && noted.note.ink && noted.note.ink.length) {
+        const img = el('img', 'mark-ink');
+        img.alt = 'Hand-written note';
+        img.src = Ink.thumbnail(noted.note.ink, noted.note.aspect || 0.8, 200);
+        w.appendChild(img);
+      }
+      b.appendChild(w);
+      b.onclick = () => openNote({ mark: noted || groupOf(m).slice(-1)[0] });
+      box.appendChild(b);
+    });
+    const cn = mine.find((m) => m.type === 'cardnote');
+    if (cn) {
+      const s = noteStrip(cn);
+      box.appendChild(s);
+    }
+    if (mine.some((m) => m.type === 'ink-card')) box.appendChild(el('p', 'side-hint', 'Pen marks on this card'));
+    if (!box.childNodes.length) box.appendChild(el('p', 'side-hint', 'Select words on the card to highlight them or add a note.'));
+    $('sideNote').disabled = $('sidePen').disabled = c.kind === 'index' || !!S.inking;
   }
 
   async function readInOrder(id) {
@@ -734,7 +1363,7 @@
       .filter((b) => scope === 'all' || b.id === scope);
     const hits = [];
     books.forEach((b) => (S.byBook[b.id] || []).forEach((c) => {
-      if (S.hidden.has(c.id)) return;
+      if (S.hidden.has(c.id) || c.kind === 'index') return;
       const t = searchText(c);
       if (words.every((w) => t.indexOf(w) >= 0)) hits.push(c);
     }));
@@ -782,7 +1411,7 @@
     const s = $(id);
     if (S.sheets.indexOf(s) >= 0) return;
     if (id === 'sheetLib') renderLibrary();
-    if (id === 'sheetSaved') renderSaved();
+    if (id === 'sheetSaved') { renderSaved(); renderMarksList(); showSavedTab(); }
     if (id === 'sheetAa') { renderStorageNote(); renderSync(); }
     s.hidden = false;
     S.sheets.push(s);
@@ -814,6 +1443,7 @@
     $('btnLib').onclick = () => openSheet('sheetLib');
     $('btnScope').onclick = () => openSheet('sheetLib');
     $('btnSaved').onclick = () => openSheet('sheetSaved');
+    $('savedTabs').querySelectorAll('button').forEach((b) => { b.onclick = () => { S.savedTab = b.dataset.v; showSavedTab(); }; });
     $('btnSearch').onclick = openSearch;
     $('btnAa').onclick = () => openSheet('sheetAa');
     $('btnAdd').onclick = $('btnAddFirst').onclick = () => $('file').click();
@@ -822,6 +1452,7 @@
     $('mCopy').onclick = () => { const id = S.menuCard; closeSheet(); copyText(cardText(S.cards[id])).then(() => toast('Card text copied'), () => toast('Could not copy')); };
     $('mHide').onclick = () => { const id = S.menuCard; closeSheet(); hideCard(id); };
     $('mBookOrder').onclick = () => { const id = S.menuCard; closeSheet(); readInOrder(id); };
+    $('mNote').onclick = () => { const id = S.menuCard; closeSheet(); setTimeout(() => openNote({ cardId: id }), 50); };
     $('mRandom').onclick = () => { closeSheet(); backToRandom(); };
     $('mToc').onclick = () => { const id = S.menuCard; closeSheet(); setTimeout(() => openToc(S.cards[id].b, id), 50); };
 
@@ -913,7 +1544,8 @@
     const b = S.bookById[id];
     // with sync on, a book deleted only here would come back from the other devices
     const everywhere = Sync.isOn() && b.key;
-    if (!confirm('Delete "' + b.title + '" and its ' + b.count + ' cards from ' + (everywhere ? 'all your devices?' : 'this device?'))) return;
+    const nMarks = Object.keys(S.mk.all).filter((k) => S.mk.all[k].b === id && !S.mk.all[k].del).length;
+    if (!confirm('Delete "' + b.title + '" and its ' + b.count + ' cards' + (nMarks ? ', with your ' + nMarks + (nMarks === 1 ? ' highlight or note' : ' highlights and notes') : '') + ', from ' + (everywhere ? 'all your devices?' : 'this device?'))) return;
     await dropBook(id);
     if (everywhere) Sync.bookDeleted(b);
     await loadFeed();
@@ -929,9 +1561,78 @@
     delete S.bookById[id];
     (S.byBook[id] || []).forEach((c) => { delete S.cards[c.id]; S.read.delete(c.id); S.hidden.delete(c.id); });
     delete S.byBook[id];
+    Object.keys(S.mk.all).forEach((k) => { if (S.mk.all[k].b === id) delete S.mk.all[k]; });
+    indexMarks();
     S.marks = S.marks.filter((m) => S.cards[m]);
     saveSets();
     if (S.scope === id) { S.scope = 'all'; store.set('scope', 'all'); }
+  }
+
+  function showSavedTab() {
+    $('savedTabs').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === S.savedTab));
+    $('savedList').hidden = S.savedTab !== 'cards';
+    $('marksList').hidden = S.savedTab !== 'marks';
+  }
+
+  // Highlights & notes, by book; each book can be sent to Notes, Mail…
+  function renderMarksList() {
+    const box = $('marksList');
+    box.textContent = '';
+    const all = Object.keys(S.mk.all).map((k) => S.mk.all[k]).filter((m) => !m.del && S.bookById[m.b]);
+    if (!all.length) { box.appendChild(el('p', 'empty-note', 'Select words on a card to highlight them or add a note. Your highlights, notes and pen marks show here.')); return; }
+    S.books.slice().sort((a, b) => b.added - a.added).forEach((book) => {
+      const mine = all.filter((m) => m.b === book.id);
+      if (!mine.length) return;
+      const cardOf = (n) => S.cards[book.id + ':' + n];
+      const head = el('div', 'marks-book');
+      const t = el('div', 'marks-book-title', book.title);
+      t.lang = 'gu';
+      head.appendChild(t);
+      const share = el('button', 'marks-share');
+      share.innerHTML = ICON.share;
+      share.appendChild(document.createTextNode('Send to Notes…'));
+      share.onclick = () => {
+        const text = Marks.exportText(book.title, mine, cardOf, (c) => pageText(c, book), (pg) => (book.labels || [])[pg - 1]);
+        if (navigator.share) navigator.share({ title: book.title, text }).catch(() => {});
+        else copyText(text).then(() => toast('Highlights & notes copied'), () => toast('Could not copy'));
+      };
+      head.appendChild(share);
+      box.appendChild(head);
+      const seen = {};
+      const sortKey = (m) => (m.type === 'ink-page' ? m.pg * 1e6 : ((cardOf(m.n) || {}).pg || 0) * 1e6 + m.n * 100 + (m.p || 0));
+      mine.sort((a, b) => sortKey(a) - sortKey(b)).forEach((m) => {
+        if (m.grp) { if (seen[m.grp]) return; seen[m.grp] = 1; }
+        const c = m.type === 'ink-page' ? null : cardOf(m.n);
+        if (m.type !== 'ink-page' && !c) return;
+        const b = el('button', 'mark-item');
+        const bar = el('span', 'mark-bar');
+        bar.style.background = m.type === 'text' ? (m.color ? Marks.DOTS[m.color] : 'var(--accent)') : 'var(--line)';
+        b.appendChild(bar);
+        const w = el('span', 'mark-words');
+        w.lang = 'gu';
+        if (m.type === 'text') w.appendChild(el('span', 'mark-q', '“' + groupOf(m).map((x) => x.q).join(' … ') + '”' + (m.lost ? '  (text changed)' : '')));
+        if (m.type === 'cardnote') w.appendChild(el('span', 'mark-q', 'Note on the card'));
+        if (m.type === 'ink-card') w.appendChild(el('span', 'mark-q', 'Pen marks on the card'));
+        if (m.type === 'ink-page') w.appendChild(el('span', 'mark-q', 'Pen marks on the page'));
+        const note = groupOf(m).find((x) => x.note);
+        if (note && note.note.text) w.appendChild(el('span', 'mark-note', '✎ ' + note.note.text));
+        if (note && note.note.ink && note.note.ink.length) {
+          const img = el('img', 'mark-ink');
+          img.alt = 'Hand-written note';
+          img.src = Ink.thumbnail(note.note.ink, note.note.aspect || 0.8, 200);
+          w.appendChild(img);
+        }
+        const where = c ? [c.ch && c.ch !== c.t ? c.ch : '', c.t, pageText(c, book)].filter(Boolean).join(' · ') : 'Page ' + ((book.labels || [])[m.pg - 1] || m.pg);
+        w.appendChild(el('span', 'mark-where', where));
+        b.appendChild(w);
+        b.onclick = () => {
+          closeSheet();
+          if (m.type === 'ink-page') setTimeout(() => openViewer(book.id, m.pg), 50);
+          else jumpTo(book.id + ':' + m.n);
+        };
+        box.appendChild(b);
+      });
+    });
   }
 
   function renderSaved() {
@@ -985,6 +1686,7 @@
   }
 
   function openViewer(bookId, page) {
+    if (V.pen) togglePagePen(false);
     V.book = bookId; V.page = page; V.zoom = 1;
     $('vZoom').classList.remove('on');
     openSheet('viewer');
@@ -1026,6 +1728,7 @@
     V.task = page.render({ canvasContext: ctx, viewport: vp });
     body.scrollTop = 0; body.scrollLeft = 0;
     try { await V.task.promise; } catch (e) { /* replaced by a newer page */ }
+    if (seq === V.seq) paintPage();
   }
 
   function turnPage(d) {
@@ -1035,7 +1738,7 @@
   }
 
   function setupViewer() {
-    $('vClose').onclick = () => closeSheet();
+    $('vClose').onclick = () => { togglePagePen(false); closeSheet(); };
     $('vPrev').onclick = () => turnPage(-1);
     $('vNext').onclick = () => turnPage(1);
     $('vZoom').onclick = () => {
@@ -1048,7 +1751,7 @@
     const body = $('vBody');
     body.addEventListener('touchstart', (e) => { t = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null; }, { passive: true });
     body.addEventListener('touchend', (e) => {
-      if (!t || V.zoom > 1) return;
+      if (!t || V.zoom > 1 || V.pen) return;
       const p = e.changedTouches[0], dx = p.clientX - t.x, dy = p.clientY - t.y;
       t = null;
       if (Math.abs(dx) > 60 && Math.abs(dx) > 2 * Math.abs(dy)) turnPage(dx < 0 ? 1 : -1);
@@ -1132,7 +1835,8 @@
   // read by an older version are then read again from their stored original,
   // so text fixes reach books already in the library.
   //   1  until 2026-11-05     2  ligatures, more old-font glyphs, Markdown
-  const PARSER = 2;
+  //   3  the book's printed index becomes a card (PDF contents pages, EPUB contents links)
+  const PARSER = 3;
   const FILE_TYPES = { pdf: 'application/pdf', epub: 'application/epub+zip', md: 'text/markdown' };
 
   // Saves a newly read book (record, cards, original file) and adds it to the
@@ -1256,9 +1960,18 @@
     setupGestures();
     setupViewer();
     setupSearch();
+    setupMarking();
+    $('sideNote').onclick = () => { const id = currentId(); if (id) openNote({ cardId: id }); };
+    $('sidePen').onclick = () => { const id = currentId(); if (id) enterPen(id); };
+    if (WIDE.addEventListener) WIDE.addEventListener('change', () => render());
+    // a turned phone or a resized window: fit cards with pen marks again
+    window.addEventListener('resize', debounce(() => { if (!S.inking) [S.els.prev, S.els.cur, S.els.next].forEach((c) => { if (c) fitLock(c); }); }, 200));
     $('impCancel').onclick = () => { cancelImport = true; $('impStatus').textContent = 'Stopping…'; };
 
+    // another tab still on the old version holds the database upgrade back
+    const blocked = setTimeout(() => toast('Close other Vanchan tabs or windows to finish updating', null, null, 60000), 2500);
     await DB.open();
+    clearTimeout(blocked);
     const [books, cards, read, marks, hidden] = await Promise.all([
       DB.all('books'), DB.all('cards'), DB.getKv('read', []), DB.getKv('marks', []), DB.getKv('hidden', [])
     ]);
@@ -1267,6 +1980,8 @@
     cards.forEach((c) => { if (S.byBook[c.b]) { S.cards[c.id] = c; S.byBook[c.b].push(c); } });
     Object.keys(S.byBook).forEach((k) => S.byBook[k].sort((a, b) => a.n - b.n));
     S.read = new Set(read); S.marks = marks.filter((m) => S.cards[m]); S.hidden = new Set(hidden);
+    (await DB.all('marks')).forEach((m) => { S.mk.all[m.id] = m; });
+    indexMarks();
     if (S.scope !== 'all' && !S.bookById[S.scope]) S.scope = 'all';
     await loadFeed();
     render();
@@ -1356,6 +2071,30 @@
       if (!S.busy) render();
       toast('Added ' + n + (n === 1 ? ' book' : ' books') + ' from your other devices');
     },
+    markById: (id) => S.mk.all[id] || null,
+    allMarks: () => Object.keys(S.mk.all).map((k) => S.mk.all[k]),
+    // a mark from another device; card numbers may be for another parser version
+    applyRemoteMark(m, parser) {
+      const local = S.mk.all[m.id];
+      if (local && (local.at || 0) >= (m.at || 0)) return false;
+      const book = S.bookById[m.b];
+      if (!book) return false;
+      if (m.type === 'text' && !m.del && parser !== (book.parser || 1)) {
+        // find the words again in this device's cards
+        const cards = S.byBook[m.b] || [];
+        const first = cards.find((c) => c.n === m.n);
+        let again = Marks.reanchor(m, first, Cards.splitSpeaker);
+        for (let i = 0; !again && i < cards.length; i++) again = Marks.reanchor(m, cards[i], Cards.splitSpeaker);
+        if (again) Object.assign(m, again); else m.lost = true;
+      }
+      S.mk.all[m.id] = m;
+      DB.put('marks', m).catch(() => {});
+      return true;
+    },
+    marksChanged() {
+      indexMarks();
+      if (!S.busy && !S.inking && !hasSelection()) render();
+    },
     getKv: (k, d) => DB.getKv(k, d),
     setKv: (k, v) => DB.setKv(k, v),
     onStatus: () => renderSync(),
@@ -1372,6 +2111,7 @@
     else if (!st.on) text = 'Keep your books, saved cards and reading place the same on all your devices. Uses your Google account.';
     else if (st.busy) text = 'Syncing…';
     else text = 'Signed in as ' + (st.email || 'your Google account') + (st.lastSync ? ' · synced ' + ago(st.lastSync) : '');
+    if (st.on && st.marksMissing) text += ' · Highlights and notes will sync once the database is updated (setup step in the guide).';
     if (st.on && st.cantSync) text += ' · ' + st.cantSync + (st.cantSync === 1 ? ' book was' : ' books were') + ' added by an older version and can\'t sync: add ' + (st.cantSync === 1 ? 'it' : 'them') + ' again on this device.';
     $('syncStatus').textContent = text;
   }
@@ -1449,6 +2189,7 @@
     const recs = cards.map((c) => Object.assign({ id: newId(c.n), b: b.id }, c));
     b.count = recs.length; b.parser = PARSER; delete b.tried;
     Sync.remap(b, moveN);
+    remapMarks(b, moveN, recs);
     if (res.r.labels && res.r.labels.some(Boolean)) b.labels = res.r.labels; else delete b.labels;
     await DB.replaceCards(b, recs);
 

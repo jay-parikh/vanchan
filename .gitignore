@@ -9,3 +9,7 @@ tests/baseline/
 tests/ui.log
 tests/.work-devices/
 tests/devices.log
+tests/.work-marks/
+tests/marks.log
+tests/.work-upgrade/
+tests/upgrade.log

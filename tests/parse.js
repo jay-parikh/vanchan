@@ -58,12 +58,23 @@ const MUST_NOT = [/[ﬀ-ﬆ]/, /[-]/, /\bnndings\b|\brst hour\b/];
 // (curly quotes are real punctuation in the output, so they don't count)
 const LEFTOVER = /[\u0A80-\u0AFF][A-Za-z`\u00F8\u201E\u0178\u0080-\u00FF]|[A-Za-z`\u00F8\u201E\u0178\u0080-\u00FF][\u0A80-\u0AFF]/;
 
+// Books with a printed index: share of entries that must open a card, and
+// entries that must open a card with this exact title.
+const INDEX_MIN = { 'Aptvani-10U.pdf': 0.95, 'Brahmcharya(P).pdf': 0.95, 'Aptvani-1.pdf': 0.95, 'dv102026guj.epub': 1, 'Aptavani-01.epub': 1 };
+const INDEX_CHECK = {
+  'Aptvani-10U.pdf': [['બુદ્ધિ કેટલી ‘અમારામાં ?’', 'બુદ્ધિ કેટલી ‘અમારામાં’ ?'], ['અબુધ - પ્રબુદ્ધ - અબુધ', 'અબુધ - પ્રબુદ્ધ - અબુધ']],
+  'Brahmcharya(P).pdf': [['કીચડમાં ઠંડકની મઝા', 'કીચડમાં ઠંડકની મઝા']],
+  'Aptvani-1.pdf': [['જગત સર્જન', 'જગત સર્જન']],
+  'Aptavani-01.epub': [['આપ્ત વિજ્ઞાપન', 'આપ્ત વિજ્ઞાપન']]
+};
+
 // odd words that are in the publisher's own file, not made by the app
 const SOURCE_TYPOS = { 'dv102026guj.epub': ['Fયારે'] };
 
 function cardsText(cards) {
   return cards.map((c) => ['#' + c.n, c.ch && '[' + c.ch + ']', c.k && '{' + c.k + '}', c.num, c.t && '## ' + c.t,
-    c.pg && 'p' + c.pg + (c.pe !== c.pg ? '-' + c.pe : ''), c.lb && 'L' + c.lb].filter(Boolean).join(' ') + '\n' + c.p.join('\n')).join('\n\n');
+    c.pg && 'p' + c.pg + (c.pe !== c.pg ? '-' + c.pe : ''), c.lb && 'L' + c.lb, c.kind === 'index' && 'INDEX'].filter(Boolean).join(' ') + '\n' +
+    (c.kind === 'index' ? c.idx.map((s) => (s.h ? '### ' + s.h + '\n' : '') + s.e.map((e) => '- ' + e.t + ' … ' + (e.p || '')).join('\n')).join('\n') : c.p.join('\n'))).join('\n\n');
 }
 
 async function extract(file) {
@@ -105,6 +116,21 @@ function wordDiff(a, b) {
     if (!cards.length) problems.push('no cards');
     (MUST[name] || []).forEach((w) => { if (text.indexOf(w) < 0) problems.push('missing "' + w + '"'); });
     MUST_NOT.forEach((re) => { const m = text.match(re); if (m) problems.push('found ' + JSON.stringify(m[0])); });
+    // the printed index: entries must open a card
+    const ixCards = cards.filter((c) => c.kind === 'index');
+    if (INDEX_MIN[name] !== undefined) {
+      const ents = [].concat(...ixCards.map((c) => [].concat(...c.idx.map((x) => x.e))));
+      const res = ents.map((e) => ({ e, c: Cards.indexTarget(cards, r.labels, e) }));
+      const ok = res.filter((x) => x.c).length;
+      if (!ents.length) problems.push('no index card');
+      else if (ok / ents.length < INDEX_MIN[name]) problems.push('index: only ' + ok + ' of ' + ents.length + ' entries open a card');
+      (INDEX_CHECK[name] || []).forEach(([entry, title]) => {
+        const hit = res.find((x) => x.e.t === entry);
+        if (!hit) problems.push('index: no entry "' + entry + '"');
+        else if (!hit.c || hit.c.t !== title) problems.push('index: "' + entry + '" opens "' + (hit.c && hit.c.t) + '"');
+      });
+      if (process.env.SHOW_INDEX) res.slice(0, +process.env.SHOW_INDEX).forEach((x) => log('      ' + x.e.t + ' (' + (x.e.p || x.e.a) + ') → ' + (x.c ? x.c.t || x.c.p[0].slice(0, 40) : '-')));
+    }
     const left = cards.map((c) => c.p.join(' ')).join(' ').split(/\s+/).filter((w) => LEFTOVER.test(w) && (SOURCE_TYPOS[name] || []).indexOf(w) < 0);
     if (left.length) problems.push(left.length + ' words with glyph leftovers, e.g. ' + left.slice(0, 5).join(' '));
     const bfile = path.join(dir, name + '.txt');
