@@ -552,8 +552,8 @@
     bar.hidden = false;
     const w = bar.offsetWidth, h = bar.offsetHeight, vw = window.innerWidth, vh = window.innerHeight;
     let top = rect.bottom + 10;
-    if (top + h > vh - 8) top = Math.max(8, rect.top - h - 10);
-    bar.style.top = top + 'px';
+    if (top + h > vh - 8) top = rect.top - h - 10;
+    bar.style.top = Math.max(8, Math.min(vh - h - 8, top)) + 'px';   // always on screen
     bar.style.left = Math.max(8, Math.min(vw - w - 8, rect.left + rect.width / 2 - w / 2)) + 'px';
   }
 
@@ -1217,8 +1217,9 @@
     const here = list.querySelector('.toc-item[data-g="' + c.g + '"]');
     if (here) {
       here.classList.add('here');
-      const top = here.offsetTop - left.clientHeight / 3;
-      if (Math.abs(left.scrollTop - top) > left.clientHeight / 3) left.scrollTop = top;
+      // only the list scrolls; the panel's header (with its fold button) stays in view
+      const top = here.offsetTop - list.clientHeight / 3;
+      if (Math.abs(list.scrollTop - top) > list.clientHeight / 3) list.scrollTop = top;
     }
     // this card's highlights, notes and pen marks
     const box = right.querySelector('.side-list');

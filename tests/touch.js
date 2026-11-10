@@ -58,6 +58,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(500);
   }
   const box = async (sel) => (await page.$(sel)).boundingBox();
+  const fingerTap = async (sel) => {
+    const r = await page.evaluate((s) => {
+      const e = document.querySelector(s); if (!e) return { why: 'missing' };
+      const b = e.getBoundingClientRect(); if (!b.width || !b.height) return { why: 'not shown' };
+      const x = b.left + b.width / 2, y = b.top + b.height / 2;
+      if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return { why: 'off screen' };
+      const hit = document.elementFromPoint(x, y);
+      if (!hit || !(hit === e || e.contains(hit))) return { why: 'covered by ' + (hit && (hit.id || hit.className || hit.tagName)) };
+      return { x, y };
+    }, sel);
+    if (r.why) throw new Error('cannot tap ' + sel + ': ' + r.why);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: r.x, y: r.y, id: 9 }] });
+    await sleep(40);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await sleep(450);
+  };
   const inkMark = (type) => page.evaluate((t) => new Promise((res) => {
     const rq = indexedDB.open('vanchan');
     rq.onsuccess = () => { const g = rq.result.transaction('marks').objectStore('marks').getAll(); g.onsuccess = () => { rq.result.close(); res(g.result.filter((m) => m.type === t && !m.del)[0] || null); }; };
@@ -69,7 +85,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     return Math.round(y);
   };
   // the Scroll tool, where the app has one
-  const pickTool = (scope, name) => page.evaluate((s, n) => { const b = document.querySelector(s + ' .pen-tool[data-tool="' + n + '"]'); if (b) { b.click(); return true; } return false; }, scope, name);
+  const pickTool = async (scope, name) => { const sel = scope + ' .pen-tool[data-tool="' + name + '"]'; if (!(await page.$(sel))) return false; await fingerTap(sel); return true; };
 
   try {
     await page.goto('http://localhost:' + PORT + '/', { waitUntil: 'networkidle0' });
@@ -106,20 +122,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       return r.toString();
     }, cur);
     await sleep(400);
-    await page.evaluate(() => document.getElementById('selHighlight').click()); await sleep(500);
+    await fingerTap('#selHighlight'); await sleep(500);
     const afterHl = await bodyTop();
     check('highlighting words further down keeps the card where it was', Math.abs(afterHl - mid) <= 2 && !!(await page.$(cur + ' .text .hl')), { mid, afterHl, sel });
-    await page.evaluate((c) => document.querySelector(c + ' .foot .icon-btn[aria-label="Pen"]').click(), cur);
+    await fingerTap(cur + ' .foot .icon-btn[aria-label="Pen"]');
     await sleep(600);
     const afterPen = await bodyTop();
     check('tapping the pen keeps the card where it was (no jump to the top)', Math.abs(afterPen - mid) <= 2, { mid, afterPen });
-    await page.evaluate((c) => document.querySelector(c + ' .pen-done').click(), cur); await sleep(500);
+    await fingerTap(cur + ' .pen-done'); await sleep(500);
     const afterDone = await bodyTop();
     check('tapping Done keeps the card where it was', Math.abs(afterDone - mid) <= 2, { mid, afterDone });
     await page.evaluate((c) => { document.querySelector(c + ' .body').scrollTop = 0; }, cur); await sleep(200);
 
     /* ---------- pen on a card ---------- */
-    await page.evaluate((c) => document.querySelector(c + ' .foot .icon-btn[aria-label="Pen"]').click(), cur);
+    await fingerTap(cur + ' .foot .icon-btn[aria-label="Pen"]');
     await sleep(600);
     const bodyBox = await box(cur + ' .body');
     const scrollTop = () => page.evaluate((c) => Math.round(document.querySelector(c + ' .body').scrollTop), cur);
@@ -141,13 +157,28 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('pen mode: on Move, one finger scrolls the card', hasScroll && s1 > 150, { hasScroll, scrollTop: s1 });
     check('… and scrolling draws nothing', !(await inkMark('ink-card')));
 
-    // 2. two fingers scroll the card while the pen is the tool
+    // 2. two fingers scroll the card while the pen is the tool (towards whichever end has room)
     await pickTool(cur, 'p');
     const before2 = await scrollTop();
-    await touch([[[cx - 40, bodyBox.y + bodyBox.height * 0.8], [cx - 40, bodyBox.y + bodyBox.height * 0.3]], [[cx + 40, bodyBox.y + bodyBox.height * 0.8], [cx + 40, bodyBox.y + bodyBox.height * 0.3]]]);
+    const up = before2 > room / 2;
+    const y1 = bodyBox.y + bodyBox.height * (up ? 0.3 : 0.8), y2 = bodyBox.y + bodyBox.height * (up ? 0.8 : 0.3);
+    await touch([[[cx - 40, y1], [cx - 40, y2]], [[cx + 40, y1], [cx + 40, y2]]]);
     const s2 = await scrollTop();
-    check('pen mode: two fingers scroll the card while the pen is on', s2 > before2 + 100, [before2, s2]);
+    check('pen mode: two fingers scroll the card while the pen is on', Math.abs(s2 - before2) > 100, [before2, s2]);
     check('… and draw nothing', !(await inkMark('ink-card')));
+
+    // a two-finger touch whose "lift" never arrives must not stop the pen
+    const lostUp = await page.evaluate((c) => {
+      const cv = document.querySelector(c + ' .ink-layer.live'), r = cv.getBoundingClientRect();
+      const ev = (type, id, primary, x, y) => cv.dispatchEvent(new PointerEvent(type, { pointerId: id, isPrimary: primary, pointerType: 'touch', clientX: r.left + x, clientY: r.top + y, bubbles: true, cancelable: true, buttons: 1 }));
+      ev('pointerdown', 21, true, 40, 40); ev('pointerdown', 22, false, 90, 40);   // two fingers… and no pointerup
+      ev('pointerdown', 23, true, 60, 80); ev('pointermove', 23, true, 140, 90); ev('pointermove', 23, true, 200, 95); ev('pointerup', 23, true, 200, 95);
+      return true;
+    }, cur);
+    await sleep(400);
+    const afterLost = await inkMark('ink-card');
+    check('a two-finger touch whose lift never arrives does not stop the pen', lostUp && afterLost && afterLost.strokes.length === 1, afterLost && afterLost.strokes.length);
+    await pickTool(cur, 'u');   // undo it again, so the next check counts only its own stroke
 
     // 3. at the end of the card, one finger draws there
     await page.evaluate((c) => { const b = document.querySelector(c + ' .body'); b.scrollTop = b.scrollHeight; }, cur);
@@ -165,16 +196,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     for (let i = 0; i < 6; i++) { await page.mouse.wheel({ deltaY: 400 }); await sleep(120); }
     await sleep(800);
     check('pen mode: the mouse wheel at the end of the card does not move to the next card', (await page.evaluate((c) => document.querySelector(c).dataset.id, cur)) === id && await page.evaluate(() => !!document.querySelector('.card.inking')));
-    await page.evaluate((c) => document.querySelector(c + ' .pen-done').click(), cur); await sleep(500);
+    await fingerTap(cur + ' .pen-done'); await sleep(500);
 
     /* ---------- writing a note by hand with a finger ---------- */
-    await page.evaluate((c) => document.querySelector(c + ' .foot .icon-btn[aria-label="More"]').click(), cur); await sleep(300);
-    await page.evaluate(() => document.getElementById('mNote').click()); await sleep(600);
-    await page.evaluate(() => document.querySelector('#noteTabs [data-v="write"]').click()); await sleep(500);
+    await fingerTap(cur + ' .foot .icon-btn[aria-label="More"]'); await sleep(300);
+    await fingerTap('#mNote'); await sleep(600);
+    await fingerTap('#noteTabs [data-v="write"]'); await sleep(100);
     const pad = await box('#notePad');
     await touch([[[pad.x + 30, pad.y + 40], [pad.x + 200, pad.y + 60]]]);
     await touch([[[pad.x + 30, pad.y + 120], [pad.x + 160, pad.y + 110]]]);
-    await page.evaluate(() => document.getElementById('noteSave').click()); await sleep(600);
+    await fingerTap('#noteSave'); await sleep(600);
     const handNote = await inkMark('cardnote');
     check('a finger writes in the hand-written note', handNote && handNote.note && handNote.note.ink && handNote.note.ink.length === 2, handNote && handNote.note);
 
@@ -182,9 +213,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const chip = await page.$(cur + ' button.page-chip');
     await chip.tap(); await sleep(2500);
     // zoom in twice: the page is then much taller than the screen
-    await page.evaluate(() => document.getElementById('vZoom').click()); await sleep(2000);
-    await page.evaluate(() => document.getElementById('vZoom').click()); await sleep(2500);
-    await page.evaluate(() => document.getElementById('vPen').click()); await sleep(400);
+    await fingerTap('#vZoom'); await sleep(2000);
+    await fingerTap('#vZoom'); await sleep(2500);
+    await fingerTap('#vPen'); await sleep(400);
     const vb = await box('#vBody');
     const vTop = () => page.evaluate(() => Math.round(document.getElementById('vBody').scrollTop));
     const vRoom = await page.evaluate(() => { const b = document.getElementById('vBody'); return b.scrollHeight - b.clientHeight; });

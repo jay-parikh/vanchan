@@ -139,7 +139,7 @@ in `js/app.js`, so books already added are read again.
 Build with `../build.sh`: it runs both test suites in `../tests` and makes
 `vanchan.zip` only when they pass.
 
-When you change any file, also change `VERSION` in `sw.js` (currently `vanchan-v13`).
+When you change any file, also change `VERSION` in `sw.js` (currently `vanchan-v14`).
 The app looks for a new version each time it is opened or brought back to the
 screen, downloads it, and reloads itself into it ("App updated"). Books,
 reading progress and settings are kept. There is no need to remove and add

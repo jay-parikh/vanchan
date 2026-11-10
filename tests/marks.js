@@ -58,7 +58,22 @@ function serve() {
   const cur = '.card:not(.under)';
   const shot = (n) => page.screenshot({ path: path.join(SHOTS, n + '.png') });
   const tap = async (sel) => { await page.waitForSelector(sel, { visible: true, timeout: 6000 }); await page.tap(sel); await sleep(350); };
-  const click = (sel) => page.evaluate((s) => document.querySelector(s).click(), sel);
+  // a real tap: the control must be on screen and not covered, or the test fails naming it
+  const click = async (sel) => {
+    const r = await page.evaluate((s) => {
+      const e = document.querySelector(s); if (!e) return { why: 'missing' };
+      let b = e.getBoundingClientRect(); if (!b.width || !b.height) return { why: 'not shown' };
+      // further down the card or list: scroll to it, as a reader would
+      if (b.top < 0 || b.bottom > innerHeight) { e.scrollIntoView({ block: 'center' }); b = e.getBoundingClientRect(); }
+      const x = b.left + b.width / 2, y = b.top + b.height / 2;
+      if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return { why: 'off screen' };
+      const hit = document.elementFromPoint(x, y);
+      if (!hit || !(hit === e || e.contains(hit))) return { why: 'covered by ' + (hit && (hit.id || hit.className || hit.tagName)) };
+      return { x, y };
+    }, sel);
+    if (r.why) throw new Error('cannot tap ' + sel + ': ' + r.why);
+    await page.mouse.click(r.x, r.y);
+  };
   const back = async () => { await page.evaluate(() => history.back()); await sleep(400); };
   const curId = () => page.evaluate((c) => document.querySelector(c).dataset.id, cur);
   const marks = () => page.evaluate(() => new Promise((res) => {
@@ -74,6 +89,7 @@ function serve() {
       return [n, 0];
     };
     const p1 = text(i), p2 = text(j === undefined ? i : j);
+    p1.scrollIntoView({ block: 'center' });   // a reader selects words they can see
     const s = p1.textContent.indexOf(from), e = p2.textContent.indexOf(to) + to.length;
     const r = document.createRange();
     r.setStart(...pointAt(p1, s)); r.setEnd(...pointAt(p2, e));
@@ -211,6 +227,7 @@ function serve() {
     }
 
     /* ---------- pen on the card ---------- */
+    await page.evaluate((c) => { document.querySelector(c + ' .body').scrollTop = 0; }, cur); await sleep(200);
     await page.evaluate((c) => document.querySelector(c + ' .foot .icon-btn[aria-label="Pen"]').click(), cur); await sleep(600);
     check('Pen turns the card footer into the pen bar', await page.evaluate((c) => { const k = document.querySelector(c); return k.classList.contains('inking') && !!k.querySelector('.pen-bar') && !k.querySelector('.foot'); }, cur));
     await shot('m05-pen-card');
@@ -368,12 +385,28 @@ function serve() {
         lf: document.getElementById('sideToc').classList.contains('folded'), rf: document.getElementById('sideMarks').classList.contains('folded'),
         count: document.getElementById('railCount').hidden ? 0 : +document.getElementById('railCount').textContent };
     }, cur);
+    // the fold buttons must be reachable by a real tap, even when the contents list
+    // is scrolled far down to the current topic
+    const tapAt = async (sel) => {
+      const r = await page.evaluate((s) => { const e = document.querySelector(s).getBoundingClientRect(); const x = e.left + e.width / 2, y = e.top + e.height / 2; const hit = document.elementFromPoint(x, y); return { x, y, ok: !!hit && (hit.id === s.slice(1) || !!hit.closest(s)) }; }, sel);
+      if (r.ok) { await page.mouse.click(r.x, r.y); await sleep(500); }
+      return r.ok;
+    };
+    await page.evaluate(() => { const all = document.querySelectorAll('#sideToc .toc-item'); all[all.length - 1].click(); }); await sleep(700);
+    const deep = await page.evaluate(() => document.querySelector('#sideToc .toc').scrollTop || document.getElementById('sideToc').scrollTop);
+    check('far down the contents, the fold button can still be tapped', deep > 100 && await tapAt('#foldToc') && await page.evaluate(() => document.getElementById('sideToc').classList.contains('folded')), deep);
+    await tapAt('#railToc');
+    check('… and the rail opens it again with a real tap', await page.evaluate(() => !document.getElementById('sideToc').classList.contains('folded')));
+    // back to the card with the marks for the checks below
+    await page.evaluate(() => document.getElementById('btnSaved').click()); await sleep(400);
+    await page.evaluate(() => document.querySelector('#savedTabs [data-v="marks"]').click()); await sleep(300);
+    await page.evaluate(() => Array.from(document.querySelectorAll('#marksList .mark-item')).find((b) => /Pen marks on the card/.test(b.innerText)).click()); await sleep(800);
     const g0 = await geo();
     const marksShown = await page.evaluate(() => document.querySelectorAll('#sideMarks .side-mark, #sideMarks .card-note').length + (/Pen marks/.test(document.getElementById('sideMarks').innerText) ? 1 : 0));
-    await page.evaluate(() => document.getElementById('foldToc').click()); await sleep(500);
+    await tapAt('#foldToc');
     const g1 = await geo();
     check('folding Contents leaves a slim rail and gives the card more room (up to 860px)', g1.lf && g1.lw <= 50 && g1.card > g0.card && g1.card <= 860 && g1.clear, [g0, g1]);
-    await page.evaluate(() => document.getElementById('foldMarks').click()); await sleep(500);
+    await tapAt('#foldMarks');
     const g2 = await geo();
     check('folding This card leaves a rail with the number of marks on the card', g2.rf && g2.rw <= 50 && g2.count === marksShown && g2.count > 0 && g2.clear && g2.card <= 860, [g2, marksShown]);
     await shot('m12-folded');
@@ -381,8 +414,8 @@ function serve() {
     const g3 = await geo();
     check('the folded panels stay folded after a reload', g3.lf && g3.rf, g3);
     check('the pen marks stay on their words with the panels folded', inkBefore > 0 && Math.abs((await inkTop(cur + ' .ink-layer')) - inkBefore) <= 1, [inkBefore, await inkTop(cur + ' .ink-layer')]);
-    await page.evaluate(() => document.getElementById('railToc').click()); await sleep(500);
-    await page.evaluate(() => document.getElementById('railMarks').click()); await sleep(500);
+    await tapAt('#railToc');
+    await tapAt('#railMarks');
     const g4 = await geo();
     check('tapping a rail opens its panel again', !g4.lf && !g4.rf && g4.lw > 200 && g4.rw > 200 && g4.clear, g4);
     await page.setViewport({ width: 390, height: 800, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });

@@ -121,6 +121,8 @@
 
     function down(e) {
       if (!draws(e)) return;
+      // a new first finger: whatever touched before has ended, even if no "up" arrived
+      if (e.isPrimary) { active = {}; multi = false; }
       active[e.pointerId] = 1;
       // a second finger: this is a scroll, not a stroke
       if (Object.keys(active).length > 1) {
@@ -176,7 +178,10 @@
       two = m;
       e.preventDefault();
     }
-    function tend(e) { if (e.touches.length < 2) two = null; }
+    function tend(e) {
+      if (e.touches.length < 2) two = null;
+      if (!e.touches.length) { active = {}; multi = false; }   // every finger is up
+    }
 
     canvas.style.touchAction = penSeen ? 'pan-y' : 'none';
     canvas.addEventListener('pointerdown', down);
