@@ -180,6 +180,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('a two-finger touch whose lift never arrives does not stop the pen', lostUp && afterLost && afterLost.strokes.length === 1, afterLost && afterLost.strokes.length);
     await pickTool(cur, 'u');   // undo it again, so the next check counts only its own stroke
 
+    // a hand resting on the screen while the pen is on selects no words
+    const noSel = await page.evaluate((c) => {
+      const t = document.querySelector(c + ' .text'), cs = getComputedStyle(t);
+      const p = t.querySelector('p'), w = document.createTreeWalker(p, 4), n = w.nextNode();
+      const r = document.createRange(); r.setStart(n, 0); r.setEnd(n, Math.min(8, n.nodeValue.length));
+      getSelection().removeAllRanges(); getSelection().addRange(r); document.dispatchEvent(new Event('selectionchange'));
+      return { us: cs.userSelect || cs.webkitUserSelect, callout: cs.webkitTouchCallout };
+    }, cur);
+    await sleep(400);
+    noSel.left = await page.evaluate(() => getSelection().toString().length);
+    check('pen mode: the card text can\'t be selected (a resting hand selects nothing)', noSel.us === 'none' && noSel.left === 0 && !(await page.evaluate(() => !document.getElementById('selBar').hidden)), noSel);
+
     // 3. at the end of the card, one finger draws there
     await page.evaluate((c) => { const b = document.querySelector(c + ' .body'); b.scrollTop = b.scrollHeight; }, cur);
     await sleep(300);
@@ -197,6 +209,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(800);
     check('pen mode: the mouse wheel at the end of the card does not move to the next card', (await page.evaluate((c) => document.querySelector(c).dataset.id, cur)) === id && await page.evaluate(() => !!document.querySelector('.card.inking')));
     await fingerTap(cur + ' .pen-done'); await sleep(500);
+    const usAfter = await page.evaluate((c) => { const cs = getComputedStyle(document.querySelector(c + ' .text')); return cs.userSelect || cs.webkitUserSelect; }, cur);
+    check('… and after Done, words can be selected again', usAfter !== 'none', usAfter);
 
     /* ---------- writing a note by hand with a finger ---------- */
     await fingerTap(cur + ' .foot .icon-btn[aria-label="More"]'); await sleep(300);
@@ -240,6 +254,54 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const pw = await page.evaluate(() => document.getElementById('vInk').clientWidth);
     check('page pen: drawing at the bottom of a zoomed page lands there', pm && lowest(pm, pw) > vb.height, { lowest: lowest(pm, pw), screen: Math.round(vb.height) });
     await page.screenshot({ path: path.join(SHOTS, 't02-page-end-drawn.png') });
+
+    /* ---------- Apple Pencil with the hand on the screen (last: a pen, once seen, is remembered) ---------- */
+    await page.evaluate(() => { document.getElementById('vBody').scrollTop = 0; });
+    await sleep(300);
+    const strokesNow = async () => { const m = await inkMark('ink-page'); return m ? m.strokes : []; };
+    const n0 = (await strokesNow()).length;
+    // the pen writes; a palm lands, moves and lifts in the middle of the stroke
+    const palm = await page.evaluate(() => {
+      const cv = document.getElementById('vInk'), r = cv.getBoundingClientRect();
+      const pe = (type, id, kind, x, y) => cv.dispatchEvent(new PointerEvent(type, { pointerId: id, isPrimary: true, pointerType: kind, clientX: r.left + x, clientY: r.top + y, bubbles: true, cancelable: true, buttons: type === 'pointerup' ? 0 : 1 }));
+      const te = (type, list) => {
+        const touches = list.map((t) => new Touch({ identifier: t[0], target: cv, clientX: r.left + t[1], clientY: r.top + t[2], touchType: t[3] }));
+        cv.dispatchEvent(new TouchEvent(type, { touches, targetTouches: touches, changedTouches: touches, bubbles: true, cancelable: true }));
+      };
+      const pen = [50, 'pen'], hand = [51, 'touch'];
+      pe('pointerdown', ...pen, 40, 60); te('touchstart', [[1, 40, 60, 'stylus']]);
+      pe('pointermove', ...pen, 90, 62);
+      pe('pointerdown', ...hand, 200, 300); te('touchstart', [[1, 90, 62, 'stylus'], [2, 200, 300, 'direct']]);
+      pe('pointermove', ...pen, 140, 63);
+      pe('pointermove', ...hand, 230, 340); te('touchmove', [[1, 140, 63, 'stylus'], [2, 230, 340, 'direct']]);
+      pe('pointerup', ...hand, 230, 340); te('touchend', [[1, 140, 63, 'stylus']]);
+      pe('pointermove', ...pen, 200, 64); pe('pointermove', ...pen, 260, 65);
+      pe('pointerup', ...pen, 260, 65); te('touchend', []);
+      return { touchAction: getComputedStyle(cv).touchAction, w: cv.clientWidth, top: Math.round(document.getElementById('vBody').scrollTop) };
+    });
+    await sleep(500);
+    const st = await strokesNow();
+    const added = st.slice(n0);
+    const pts = []; if (added[0]) { let x = 0, y = 0; for (let i = 0; i + 1 < added[0].d.length; i += 2) { x += added[0].d[i]; y += added[0].d[i + 1]; pts.push([Math.round(x / 10000 * palm.w), Math.round(y / 10000 * palm.w)]); } }
+    const maxY = Math.max(...pts.map((q) => q[1])), maxX = Math.max(...pts.map((q) => q[0]));
+    check('Apple Pencil: a palm on the screen adds nothing to the line and does not cut it short', added.length === 1 && maxY < 80 && maxX >= 250, { added: added.length, maxX, maxY });
+    check('Apple Pencil: the hand does not scroll the page while writing', palm.top === 0, palm.top);
+    check('Apple Pencil: the page never takes a pen stroke for a scroll (touch-action stays none)', palm.touchAction === 'none', palm.touchAction);
+    // once a pen has been used, a finger alone draws nothing (the palm before the pen lands)
+    await touch([[[vb.x + 60, vb.y + 200], [vb.x + 220, vb.y + 210]]]);
+    check('Apple Pencil: afterwards a finger or palm alone draws nothing', (await strokesNow()).length === st.length, (await strokesNow()).length - st.length);
+    // the Highlight tool with the pen, twice in a row
+    await pickTool('#vPenBar', 'h');
+    for (const y of [120, 160]) {
+      await page.evaluate((y) => {
+        const cv = document.getElementById('vInk'), r = cv.getBoundingClientRect();
+        const pe = (type, x) => cv.dispatchEvent(new PointerEvent(type, { pointerId: 60 + y, isPrimary: true, pointerType: 'pen', clientX: r.left + x, clientY: r.top + y, bubbles: true, cancelable: true, buttons: type === 'pointerup' ? 0 : 1 }));
+        pe('pointerdown', 40); pe('pointermove', 120); pe('pointermove', 220); pe('pointerup', 220);
+      }, y);
+      await sleep(300);
+    }
+    const hls = (await strokesNow()).slice(st.length).filter((x) => x.t === 'h').length;
+    check('Apple Pencil: a second highlight works like the first', hls === 2, hls);
 
     check('no script errors', errors.length === 0, errors.slice(0, 3));
   } catch (e) {

@@ -325,6 +325,10 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 :root[data-theme="dark"] .ink-layer { mix-blend-mode: normal; }
 .ink-layer.live { pointer-events: auto; cursor: crosshair; }
 .ink-layer.live.scrolling, #vInk.live.scrolling { pointer-events: none; }   /* the Scroll tool: touches reach the page under it */
+/* pen on: a hand resting on the screen selects nothing */
+body.inking #stack, body.page-pen #viewer, .ink-layer, #vInk, #noteInk {
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
 .card.inking .body { overscroll-behavior: contain; }
 
 /* the pen bar: Pen · Highlight · Eraser · Undo · Done */

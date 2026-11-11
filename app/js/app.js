@@ -541,6 +541,11 @@
     return !!(sel && !sel.isCollapsed && sel.rangeCount && S.els.cur && S.els.cur.contains(sel.anchorNode));
   }
 
+  function clearSelection() {
+    const sel = window.getSelection && window.getSelection();
+    if (sel && sel.rangeCount && !sel.isCollapsed) sel.removeAllRanges();
+  }
+
   function hideBars() {
     const a = $('selBar'), b = $('markBar');
     if (a) a.hidden = true;
@@ -577,9 +582,11 @@
   }
 
   function onSelection() {
-    if (S.inking || S.editing) return;
+    if (S.inking) { clearSelection(); return; }
     const bar = $('selBar');
     if (!hasSelection() || !selectionParts()) { bar.hidden = true; return; }
+    // new words chosen while a highlight's bar is open (a long-press makes no click to close it)
+    $('markBar').hidden = true; S.editing = null;
     $('selDot').style.background = Marks.DOTS[lastColor()];
     placeBar(bar, window.getSelection().getRangeAt(0).getBoundingClientRect());
   }
@@ -798,6 +805,7 @@
   function togglePagePen(on) {
     if (V.pen && V.pen.surface) V.pen.surface.destroy();
     V.pen = on ? { tool: { t: 'p', c: penColor() } } : null;
+    document.body.classList.toggle('page-pen', !!on);
     $('vPen').classList.toggle('on', !!on);
     $('vPenBar').hidden = !on;
     paintPage();
@@ -887,6 +895,9 @@
   function render() {
     // drawing ends when its card is no longer the one shown (another book, a jump)
     if (S.inking && S.order[S.pos] !== S.inking.id) { if (S.inking.surface) S.inking.surface.destroy(); S.inking = null; }
+    // while the pen is on, a hand resting on the screen must not select words
+    document.body.classList.toggle('inking', !!S.inking);
+    if (S.inking) clearSelection();
     // the same card drawn again (pen on/off, a highlight, a note): keep its place in the text
     const was = S.els.cur && S.els.cur.dataset.id, wasBody = S.els.cur && S.els.cur.querySelector('.body');
     const keepTop = was && was === S.order[S.pos] && wasBody ? wasBody.scrollTop : null;

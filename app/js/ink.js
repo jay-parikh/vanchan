@@ -8,11 +8,15 @@
  * stays small: { c: colour, t: 'p' pen | 'h' highlighter, d: [x0, y0, dx1,
  * dy1, …] }. Line widths are a share of the surface width.
  *
- * Input: an Apple Pencil (pointerType "pen") always draws; once one has been
- * used, a finger scrolls instead (palm rejection). Without a pen a finger or
- * the mouse draws, and two fingers scroll (a second finger cancels the stroke
- * the first one began). The "Scroll" tool (t: 's') lets one finger scroll:
- * the app then lets touches through the layer (class "scrolling").
+ * Input: an Apple Pencil (pointerType "pen") always draws. Once one has been
+ * used on this device, a finger or palm never draws: while the pen is down,
+ * touches are ignored altogether (palm rejection), and two fingers scroll.
+ * Without a pen a finger or the mouse draws, and two fingers scroll (a second
+ * finger cancels the stroke the first one began). Only the pointer that began
+ * a stroke adds to it. The browser never pans the layer itself (touch-action
+ * none), so a pen stroke is never taken for a scroll. The "Move" tool (t: 's')
+ * lets one finger scroll: the app then lets touches through the layer (class
+ * "scrolling").
  */
 (function (root) {
   'use strict';
@@ -21,6 +25,12 @@
   var WIDTH = { p: 0.0065, h: 0.04 };          // share of the surface width
   var HL_COLOR = 'rgba(245, 205, 70, 0.45)';
   var penSeen = false;                          // a pen was used on this device
+  try { penSeen = root.localStorage.getItem('vanchan-pen') === '1'; } catch (x) { /* storage blocked */ }
+  function sawPen() {
+    if (penSeen) return;
+    penSeen = true;
+    try { root.localStorage.setItem('vanchan-pen', '1'); } catch (x) { /* storage blocked */ }
+  }
 
   function encode(pts, w, h) {
     var d = [], px = 0, py = 0;
@@ -95,6 +105,7 @@
   function surface(canvas, opts) {
     var strokes = (opts.strokes || []).slice(), history = [], cur = null, erasing = false, curPts = null;
     var two = null, active = {}, multi = false;
+    var owner = null, penDown = false;            // the pointer drawing now; is it a pen
 
     function size() { return opts.size(); }
     function redraw() {
@@ -114,26 +125,33 @@
       return strokes.length !== before;
     }
     function draws(e) {
-      if (e.pointerType === 'pen') { penSeen = true; canvas.style.touchAction = 'pan-y'; return true; }
+      if (e.pointerType === 'pen') { sawPen(); return true; }
       if (e.pointerType === 'touch') return !penSeen;
       return e.button === 0 || e.buttons === 1 || e.pointerType === 'mouse';
     }
 
+    function cancel() {
+      if (erasing) { strokes = history.pop() || strokes; erasing = false; }
+      cur = null; curPts = null; owner = null; penDown = false; redraw();
+    }
     function down(e) {
-      if (!draws(e)) return;
-      // a new first finger: whatever touched before has ended, even if no "up" arrived
-      if (e.isPrimary) { active = {}; multi = false; }
+      if (!draws(e)) { if (e.pointerType === 'touch') e.preventDefault(); return; }   // a palm: nothing
+      if (e.pointerType === 'pen') {
+        // the pen wins over a finger or palm that landed first
+        if (owner !== null && !penDown) cancel();
+        active = {}; multi = false;
+      } else if (e.isPrimary) { active = {}; multi = false; }   // a new first finger: what touched before has ended, even if no "up" arrived
       active[e.pointerId] = 1;
       // a second finger: this is a scroll, not a stroke
       if (Object.keys(active).length > 1) {
         multi = true;
-        if (erasing) { strokes = history.pop() || strokes; erasing = false; }
-        cur = null; curPts = null; redraw();
+        cancel();
         return;
       }
       if (multi || opts.tool().t === 's') return;
       e.preventDefault();
       try { canvas.setPointerCapture(e.pointerId); } catch (x) { /* old browsers */ }
+      owner = e.pointerId; penDown = e.pointerType === 'pen';
       var tool = opts.tool(), p = pos(e);
       if (tool.t === 'e') { history.push(strokes.slice()); erasing = { changed: eraseAt(p) }; return; }
       curPts = [p];
@@ -142,11 +160,12 @@
       redraw();
     }
     function move(e) {
-      if (multi) return;
+      if (multi || e.pointerId !== owner) return;
       if (erasing) { if (eraseAt(pos(e))) erasing.changed = true; return; }
       if (!cur) return;
       e.preventDefault();
-      var list = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+      var list = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+      if (!list.length) list = [e];
       list.forEach(function (ev) { curPts.push(pos(ev)); });
       var s = size();
       cur.d = encode(curPts, s[0], s[1]);
@@ -155,6 +174,8 @@
     function up(e) {
       delete active[e.pointerId];
       if (multi) { if (!Object.keys(active).length) multi = false; return; }
+      if (e.pointerId !== owner) return;          // a palm lifting: the pen goes on
+      owner = null; penDown = false;
       if (erasing) {
         var changed = erasing.changed;
         erasing = false;
@@ -168,22 +189,29 @@
       redraw();
       opts.onChange(strokes.slice());
     }
-    // two fingers scroll the card while one finger draws
-    function mid(e) { return [(e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2]; }
-    function tstart(e) { if (e.touches.length === 2) { two = mid(e); multi = true; cur = null; curPts = null; redraw(); } }
+    // two fingers scroll the card (Safari lists the pen among the touches: it doesn't count)
+    function fingers(e) { return Array.prototype.filter.call(e.touches, function (t) { return t.touchType !== 'stylus'; }); }
+    function mid(f) { return [(f[0].clientX + f[1].clientX) / 2, (f[0].clientY + f[1].clientY) / 2]; }
+    function tstart(e) {
+      var f = fingers(e);
+      if (penDown || f.length !== 2) return;      // writing with the hand on the screen
+      two = mid(f); multi = true; cancel();
+    }
     function tmove(e) {
-      if (e.touches.length !== 2 || two === null) return;
-      var m = mid(e);
+      if (penDown) { if (e.cancelable) e.preventDefault(); return; }
+      var f = fingers(e);
+      if (f.length !== 2 || two === null) return;
+      var m = mid(f);
       if (opts.onScroll) opts.onScroll(two[1] - m[1], two[0] - m[0]);
       two = m;
       e.preventDefault();
     }
     function tend(e) {
-      if (e.touches.length < 2) two = null;
+      if (fingers(e).length < 2) two = null;
       if (!e.touches.length) { active = {}; multi = false; }   // every finger is up
     }
 
-    canvas.style.touchAction = penSeen ? 'pan-y' : 'none';
+    canvas.style.touchAction = 'none';
     canvas.addEventListener('pointerdown', down);
     canvas.addEventListener('pointermove', move);
     canvas.addEventListener('pointerup', up);

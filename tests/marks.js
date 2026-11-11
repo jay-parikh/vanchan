@@ -173,7 +173,10 @@ function serve() {
 
     /* ---------- across two paragraphs ---------- */
     const a1 = p0[1].split(' ').slice(-3).join(' '), a2 = p0[2].split(' ').slice(0, 2).join(' ');
+    // a highlight's bar is open, then new words are chosen by a long-press (which makes no click)
+    await page.evaluate((c) => document.querySelector(c + ' .text .hl').click(), cur); await sleep(300);
     await select(1, a1, a2, 2); await sleep(400);
+    check('choosing more words while a highlight\'s bar is open shows the Highlight bar', await page.evaluate(() => !document.getElementById('selBar').hidden && document.getElementById('markBar').hidden));
     await tap('#selHighlight');
     const two = await page.evaluate((c) => Array.from(document.querySelectorAll(c + ' .text .hl')).filter((e) => e.closest('p').dataset.i !== '0').map((e) => e.closest('p').dataset.i + ':' + e.textContent), cur);
     check('a highlight across two paragraphs marks both parts', two.length === 2 && two[0] === '1:' + a1 && two[1] === '2:' + a2, two);

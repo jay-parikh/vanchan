@@ -91,6 +91,9 @@ async function fake(req, res, url) {
       return send(res, 200, t.filter((r) => r.user_id === uid && (!since || (r.updated_at || '') >= since)));
     }
     if (req.method === 'POST') {
+      // like Postgres: an upsert must name the table's primary key
+      const pk = m[1] === 'vanchan_marks' ? 'user_id,id' : 'user_id,book_key';
+      if (url.searchParams.get('on_conflict') !== pk) return send(res, 400, { code: '42P10', message: 'there is no unique or exclusion constraint matching the ON CONFLICT specification' });
       const rows = JSON.parse((await body(req)).toString());
       for (const r of [].concat(rows)) {
         if (r.user_id !== uid) return send(res, 403, { message: 'row-level security' });   // like RLS
@@ -159,7 +162,7 @@ async function device(browser, name) {
 (async () => {
   execSync('rm -rf ' + JSON.stringify(WORK) + ' && mkdir -p ' + JSON.stringify(WORK) + ' ' + JSON.stringify(SHOTS));
   execSync('cp -r ' + JSON.stringify(APP) + ' ' + JSON.stringify(SITE));
-  fs.writeFileSync(path.join(SITE, 'js/config.js'), 'window.VANCHAN_SYNC = { url: ' + JSON.stringify(FAKE) + ", key: 'sb_publishable_test' };\n");
+  fs.writeFileSync(path.join(SITE, 'js/config.js'), 'window.VANCHAN_SYNC = { url: ' + JSON.stringify(FAKE) + ", key: 'sb_publishable_test', pullEvery: 2000 };\n");
   const srv = await serve();
   const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-gpu'] });
   const cur = '.card:not(.under)';
@@ -316,6 +319,13 @@ async function device(browser, name) {
     await syncNow(Bd); await syncNow(A); await sleep(400);
     const mA = (await marksOf(A)).filter((m) => m.type === 'text');
     check('removing the highlight on B removes it on A', mA.length && mA.every((m) => m.del) && !(await A.evaluate((c) => document.querySelector(c + ' .text .hl'), cur)), mA.map((m) => m.del));
+    // a new highlight on A shows on B while B stays open (no reload, no app switch)
+    await selectFirstWords(A); await sleep(400);
+    await tap(A, '#selHighlight'); await sleep(300);
+    await syncNow(A);
+    let liveB = false;
+    for (let i = 0; i < 16 && !liveB; i++) { await sleep(500); liveB = (await marksOf(Bd)).some((m) => m.type === 'text' && !m.del) && !!(await Bd.evaluate((c) => document.querySelector(c + ' .text .hl'), cur)); }
+    check('a highlight made on A appears on B while B is open', liveB);
     // without the marks table: the rest still syncs, and Settings says why
     marksMissing = true;
     await syncNow(A);
@@ -341,12 +351,16 @@ async function device(browser, name) {
 
     /* ---------- switching off ---------- */
     await tap(Bd, '#btnAa'); await Bd.tap('#syncOn'); await sleep(400); await back(Bd);
+    // A, still on, looks for changes while it is on screen: put it in the background for this check
+    const setHidden = (pg, h) => pg.evaluate((h) => Object.defineProperty(document, 'hidden', { configurable: true, get: () => h }), h);
+    await setHidden(A, true); await sleep(300);
     const before = hits.length;
     await next(Bd);
     await tap(Bd, cur + ' .foot .icon-btn:nth-last-child(3)');
     await Bd.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
     await sleep(5000);
     check('switched off: nothing more is sent', hits.length === before, hits.slice(before));
+    await setHidden(A, false);
     const authBefore = hits.filter((h) => h === 'GET /auth/v1/authorize').length;
     const nav = await switchOn(Bd);
     await sleep(1500);

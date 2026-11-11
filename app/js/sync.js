@@ -23,7 +23,8 @@
   'use strict';
 
   var BUCKET = 'vanchan-books';
-  var PULL_GAP = 60000;        // pull at most once a minute when the app comes back
+  var PULL_GAP = 15000;        // when the app comes back, pull if the last pull is older than this
+  var PULL_EVERY = 60000;      // while the app is open on screen, look for changes this often
   var PUSH_DELAY = 4000;       // changes are sent in small batches
 
   var cfg = root.VANCHAN_SYNC && root.VANCHAN_SYNC.url && root.VANCHAN_SYNC.key ? root.VANCHAN_SYNC : null;
@@ -34,7 +35,7 @@
   var state = {};              // book key -> progress { parser, read, readReset, marks, hidden, pos }
   var dirty = { progress: {}, books: {}, deleted: {}, marks: {} };
   var marksCursor = '';        // server time of the newest mark change already fetched
-  var started = false, running = null, pushTimer = null, lastPull = 0;
+  var started = false, running = null, pushTimer = null, lastPull = 0, pullTimer = null;
   var status = { busy: false, error: '', lastSync: 0, marksMissing: false };
   var shownPos = 0;            // newest other-device place already offered
 
@@ -207,8 +208,11 @@
     });
   }
 
+  // each table's primary key: a row with the same key is updated, not added again
+  var KEYS = { vanchan_books: 'user_id,book_key', vanchan_progress: 'user_id,book_key', vanchan_marks: 'user_id,id' };
+
   function upsert(table, rows, keepalive) {
-    return api('POST', '/rest/v1/' + table + '?on_conflict=user_id,book_key', {
+    return api('POST', '/rest/v1/' + table + '?on_conflict=' + KEYS[table], {
       body: rows, keepalive: keepalive, headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }
     });
   }
@@ -280,6 +284,10 @@
       started = true;
       document.addEventListener('visibilitychange', onVisible);
       window.addEventListener('online', onOnline);
+      var every = (cfg && cfg.pullEvery) || PULL_EVERY;
+      pullTimer = setInterval(function () {
+        if (!document.hidden && isOn() && session && !running && Date.now() - lastPull > every / 2) syncNow();
+      }, every);
     }
     if (firstTime) seedFromApp();
     syncNow();
@@ -291,6 +299,7 @@
     document.removeEventListener('visibilitychange', onVisible);
     window.removeEventListener('online', onOnline);
     clearTimeout(pushTimer);
+    clearInterval(pullTimer);
   }
 
   function pullSoon(force) {
