@@ -8,6 +8,11 @@
  * stays small: { c: colour, t: 'p' pen | 'h' highlighter, d: [x0, y0, dx1,
  * dy1, …] }. Line widths are a share of the surface width.
  *
+ * The highlighter draws like a marker: a stroke that runs along a line of text
+ * becomes one straight, even band (the hand's wobble taken out), any other
+ * stroke is smoothed, and all highlights are painted as one layer, so where
+ * they cross or go back over themselves the colour stays the same.
+ *
  * Input: an Apple Pencil (pointerType "pen") always draws. Once one has been
  * used on this device, a finger or palm never draws: while the pen is down,
  * touches are ignored altogether (palm rejection), and two fingers scroll.
@@ -24,6 +29,7 @@
   var SCALE = 10000;
   var WIDTH = { p: 0.0065, h: 0.04 };          // share of the surface width
   var HL_COLOR = 'rgba(245, 205, 70, 0.45)';
+  var HL_SOLID = 'rgb(245, 205, 70)', HL_ALPHA = 0.45;
   var penSeen = false;                          // a pen was used on this device
   try { penSeen = root.localStorage.getItem('vanchan-pen') === '1'; } catch (x) { /* storage blocked */ }
   function sawPen() {
@@ -52,12 +58,32 @@
     return pts;
   }
 
-  function paintStroke(ctx, s, w, h) {
+  // A highlighter stroke as it is kept: straight along a line of text, or smoothed.
+  // pts are in CSS px; w is the surface width.
+  function shapeHighlight(pts, w) {
+    if (pts.length < 2) return pts;
+    var xs = pts.map(function (p) { return p[0]; }), ys = pts.map(function (p) { return p[1]; });
+    var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
+    var minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
+    var band = WIDTH.h * w;
+    if (maxY - minY <= band * 1.5 && maxX - minX >= Math.max(band, (maxY - minY) * 2)) {
+      var mid = ys.slice().sort(function (a, b) { return a - b; })[ys.length >> 1];   // the line it follows (a hook at either end doesn't move it)
+      return pts[0][0] <= pts[pts.length - 1][0] ? [[minX, mid], [maxX, mid]] : [[maxX, mid], [minX, mid]];
+    }
+    // not along a line (a circle, a mark in the margin): take the shake out
+    return pts.map(function (p, i) {
+      var sx = 0, sy = 0, n = 0;
+      for (var j = Math.max(0, i - 3); j <= Math.min(pts.length - 1, i + 3); j++) { sx += pts[j][0]; sy += pts[j][1]; n++; }
+      return i === 0 || i === pts.length - 1 ? p : [sx / n, sy / n];
+    });
+  }
+
+  function paintStroke(ctx, s, w, h, color) {
     var p = decode(s.d, w, h), i;
     if (!p.length) return;
     ctx.save();
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    ctx.strokeStyle = s.t === 'h' ? HL_COLOR : s.c;
+    ctx.lineCap = s.t === 'h' ? 'butt' : 'round'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = color || (s.t === 'h' ? HL_COLOR : s.c);
     ctx.lineWidth = Math.max(1.2, (WIDTH[s.t] || WIDTH.p) * w);
     ctx.beginPath();
     ctx.moveTo(p[0][0], p[0][1]);
@@ -68,6 +94,27 @@
     }
     ctx.stroke();
     ctx.restore();
+  }
+
+  // Highlights first, all in one see-through layer (crossings don't darken), then the pen on top.
+  var hlLayer = null;
+  function paintAll(ctx, strokes, w, h, pw, ph, scale) {
+    var hl = (strokes || []).filter(function (s) { return s.t === 'h'; });
+    if (hl.length) {
+      hlLayer = hlLayer || document.createElement('canvas');
+      if (hlLayer.width !== pw || hlLayer.height !== ph) { hlLayer.width = pw; hlLayer.height = ph; }
+      var hc = hlLayer.getContext('2d');
+      hc.setTransform(1, 0, 0, 1, 0, 0);
+      hc.clearRect(0, 0, pw, ph);
+      hc.setTransform(scale, 0, 0, scale, 0, 0);
+      hl.forEach(function (s) { paintStroke(hc, s, w, h, HL_SOLID); });
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = HL_ALPHA;
+      ctx.drawImage(hlLayer, 0, 0);
+      ctx.restore();
+    }
+    (strokes || []).forEach(function (s) { if (s.t !== 'h') paintStroke(ctx, s, w, h); });
   }
 
   // Draws strokes onto a canvas of CSS size w × h (sharp on high-DPI screens).
@@ -81,7 +128,7 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    (strokes || []).forEach(function (s) { paintStroke(ctx, s, w, h); });
+    paintAll(ctx, strokes, w, h, canvas.width, canvas.height, dpr);
   }
 
   // A small picture of a drawing, as a data URL (for lists).
@@ -89,7 +136,7 @@
     var c = document.createElement('canvas'), w = width || 120, h = Math.round(w * (aspect || 1));
     c.width = w; c.height = h;
     var ctx = c.getContext('2d');
-    (strokes || []).forEach(function (s) { paintStroke(ctx, s, w, h); });
+    paintAll(ctx, strokes, w, h, w, h, 1);
     try { return c.toDataURL('image/png'); } catch (e) { return ''; }
   }
 
@@ -116,10 +163,21 @@
       var r = canvas.getBoundingClientRect(), s = size();
       return [(e.clientX - r.left) * (s[0] / r.width), (e.clientY - r.top) * (s[1] / r.height)];
     }
+    // is p within r of the segment a–b
+    function near(p, a, b, r) {
+      var dx = b[0] - a[0], dy = b[1] - a[1], l = dx * dx + dy * dy;
+      var t = l ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l)) : 0;
+      var x = a[0] + t * dx - p[0], y = a[1] + t * dy - p[1];
+      return x * x + y * y < r * r;
+    }
+    function shaped() { return cur.t === 'h' ? shapeHighlight(curPts, size()[0]) : curPts; }
     function eraseAt(p) {
       var s = size(), r = 14, before = strokes.length;
       strokes = strokes.filter(function (st) {
-        return !decode(st.d, s[0], s[1]).some(function (q) { return Math.abs(q[0] - p[0]) < r && Math.abs(q[1] - p[1]) < r; });
+        var q = decode(st.d, s[0], s[1]);
+        var reach = st.t === 'h' ? r + WIDTH.h * s[0] / 2 : r;
+        for (var i = 0; i < q.length; i++) if (near(p, q[i], q[i + 1] || q[i], reach)) return false;
+        return true;
       });
       if (strokes.length !== before) redraw();
       return strokes.length !== before;
@@ -168,7 +226,7 @@
       if (!list.length) list = [e];
       list.forEach(function (ev) { curPts.push(pos(ev)); });
       var s = size();
-      cur.d = encode(curPts, s[0], s[1]);
+      cur.d = encode(shaped(), s[0], s[1]);
       redraw();
     }
     function up(e) {
@@ -183,8 +241,11 @@
         return;
       }
       if (!cur) return;
+      cur.d = encode(shaped(), size()[0], size()[1]);
+      // a highlighter tap makes no band (its ends are flat): nothing to keep
+      if (cur.d.length < (cur.t === 'h' ? 4 : 2)) { cur = null; curPts = null; redraw(); return; }
       history.push(strokes.slice());
-      if (cur.d.length >= 2) strokes.push(cur);
+      strokes.push(cur);
       cur = null; curPts = null;
       redraw();
       opts.onChange(strokes.slice());
@@ -243,7 +304,7 @@
     };
   }
 
-  var api = { encode: encode, decode: decode, paint: paint, thumbnail: thumbnail, surface: surface, HL_COLOR: HL_COLOR };
+  var api = { encode: encode, decode: decode, paint: paint, thumbnail: thumbnail, surface: surface, shapeHighlight: shapeHighlight, HL_COLOR: HL_COLOR };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Ink = api;
 })(this);

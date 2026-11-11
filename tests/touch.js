@@ -303,6 +303,38 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const hls = (await strokesNow()).slice(st.length).filter((x) => x.t === 'h').length;
     check('Apple Pencil: a second highlight works like the first', hls === 2, hls);
 
+    // a shaky highlight along a line of text becomes one straight, even band
+    const penLine = (pts, idBase) => page.evaluate((pts, idBase) => {
+      const cv = document.getElementById('vInk'), r = cv.getBoundingClientRect();
+      pts.forEach((q, i) => cv.dispatchEvent(new PointerEvent(i === 0 ? 'pointerdown' : i === pts.length - 1 ? 'pointerup' : 'pointermove', { pointerId: idBase, isPrimary: true, pointerType: 'pen', clientX: r.left + q[0], clientY: r.top + q[1], bubbles: true, cancelable: true, buttons: i === pts.length - 1 ? 0 : 1 })));
+    }, pts, idBase);
+    const shaky = []; for (let x = 40; x <= 280; x += 8) shaky.push([x, 220 + ((x / 8) % 2 ? 4 : -4) + (x > 250 ? 6 : 0)]);
+    const nBefore = (await strokesNow()).length;
+    await penLine(shaky, 90); await sleep(300);
+    const band = (await strokesNow())[nBefore];
+    const bandPts = []; if (band) { let x = 0, y = 0; for (let i = 0; i + 1 < band.d.length; i += 2) { x += band.d[i]; y += band.d[i + 1]; bandPts.push([Math.round(x / 10000 * palm.w), Math.round(y / 10000 * palm.w)]); } }
+    check('pen highlight: a shaky stroke along a line becomes one straight band', band && band.t === 'h' && bandPts.length === 2 && bandPts[0][1] === bandPts[1][1] && Math.abs(bandPts[0][1] - 220) <= 5 && bandPts[0][0] <= 41 && bandPts[1][0] >= 271, bandPts);
+    // a circle with the highlighter keeps its shape
+    const ring = []; for (let k = 0; k <= 24; k++) ring.push([160 + 50 * Math.cos(k / 24 * 2 * Math.PI), 330 + 50 * Math.sin(k / 24 * 2 * Math.PI)]);
+    await penLine(ring, 91); await sleep(300);
+    const ringSt = (await strokesNow())[nBefore + 1];
+    check('pen highlight: a circle stays a circle', ringSt && ringSt.d.length / 2 > 10, ringSt && ringSt.d.length / 2);
+    // where highlights cross, the colour is the same as where there is one
+    const even = await page.evaluate(() => {
+      const c = document.createElement('canvas');
+      const enc = (pts) => Ink.encode(pts, 200, 200);
+      Ink.paint(c, [{ t: 'h', d: enc([[20, 100], [180, 100]]) }, { t: 'h', d: enc([[100, 20], [100, 180]]) }, { t: 'h', d: enc([[30, 100], [170, 100]]) }], 200, 200);
+      const px = (x, y) => { const k = c.width / 200; return Array.from(c.getContext('2d').getImageData(Math.round(x * k), Math.round(y * k), 1, 1).data); };
+      return { one: px(40, 100), cross: px(100, 100) };
+    });
+    check('pen highlight: crossing highlights don\'t get darker', Math.abs(even.one[3] - even.cross[3]) <= 2 && even.one[3] > 0, even);
+    // the eraser touching the middle of a long straight band removes it
+    await pickTool('#vPenBar', 'e');
+    await penLine([[160, 222], [161, 222], [162, 222]], 92); await sleep(300);
+    const afterErase = await strokesNow();
+    check('eraser: touching the middle of a straight highlight removes it', afterErase.length === nBefore + 1 && !afterErase.some((x) => x === band || JSON.stringify(x.d) === JSON.stringify(band && band.d)), afterErase.length - nBefore);
+    await page.screenshot({ path: path.join(SHOTS, 't03-pen-highlight.png') });
+
     check('no script errors', errors.length === 0, errors.slice(0, 3));
   } catch (e) {
     check('test run finished', false, e.stack.split('\n').slice(0, 3).join(' | '));
