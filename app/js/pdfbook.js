@@ -59,11 +59,14 @@
   // (font + raw text) so legacy glyph sequences that pdf.js split across
   // pieces are converted together.
   function buildLines(pg, fonts) {
-    var lines = [], cur = null;
+    var lines = [], cur = null, last = null;
     pg.items.forEach(function (it) {
       if (!it.s) return;
       var size = it.size || 10;
       var blank = !it.s.trim();
+      // the same text drawn again a hair away: a fake-bold trick, not more words
+      if (!blank && last && it.s === last.s && it.f === last.f && Math.abs(it.x - last.x) < 1 && Math.abs(it.y - last.y) < 1) return;
+      if (!blank) last = it;
       if (cur && Math.abs(it.y - cur.y) < 0.5 * Math.max(size, cur.size) && it.x > cur.x1 - 0.6 * size) {
         var gap = it.x - cur.x1;
         if (gap > 0.15 * size) addText(cur, ' ', it.f);
@@ -90,7 +93,7 @@
       ln.font = bf;
       ln.fontChars = byFont;
       // private-use characters come from symbol fonts (bullets, arrows)
-      ln.text = convertRuns(ln.runs, fonts).replace(/[\uE000-\uF8FF]/g, '').replace(/\s+/g, ' ').trim();
+      ln.text = convertRuns(ln.runs, fonts).replace(/[\uE000-\uF8FF]/g, '').replace(DOUBLED_MARK, '$1').replace(/\s+/g, ' ').trim();
     });
     return lines.filter(function (ln) { return ln.text; });
   }
@@ -255,6 +258,9 @@
 
   /* ---------- columns ---------- */
 
+  // a vowel sign or anusvara typed twice in the source ("ક્યાંંક"): once is meant
+  var DOUBLED_MARK = /([\u0A81-\u0A83\u0ABC\u0ABE-\u0ACD\u0AE2\u0AE3])\1+/g;
+
   function columnBoxes(lines, bodySize) {
     var body = lines.filter(function (ln) { return Math.abs(ln.size - bodySize) < 0.6; });
     var widths = body.map(function (ln) { return Math.round(ln.x1 - ln.x0); });
@@ -277,6 +283,8 @@
       var d = c < b.x0 ? b.x0 - c : c > b.x1 ? c - b.x1 : 0;
       if (d < bd) { bd = d; best = b; }
     });
+    // far outside every column (a page set in another size, like an editorial, judged by a cover's box): no box
+    if (best) { var w = best.x1 - best.x0; if (ln.x0 > best.x1 + 0.5 * w || ln.x1 < best.x0 - 0.5 * w) return null; }
     return best;
   }
 

@@ -362,7 +362,7 @@
       flags(p.hidden, snap.hidden);
       dirty.progress[b.key] = 1;
     });
-    A.allMarks().forEach(function (m) { if (m.key) dirty.marks[m.id] = 1; });
+    A.allMarks().forEach(function (m) { dirty.marks[m.id] = 1; });
     save();
   }
 
@@ -380,7 +380,7 @@
       save(); schedulePush();
     },
     markChanged: function (m) {
-      if (!isOn() || !m.key) return;
+      if (!isOn()) return;
       dirty.marks[m.id] = 1;
       save(); schedulePush();
     },
@@ -571,22 +571,25 @@
 
   /* ---------- highlights, notes and pen marks ---------- */
 
-  // the parts of a mark other devices need (b is the local book id)
+  // the parts of a mark other devices need (b is its book here)
   function markRow(m, b) {
     var data = {};
     Object.keys(m).forEach(function (k) { if (k !== 'b' && k !== 'key' && k !== 'lost') data[k] = m[k]; });
-    return { user_id: session.user.id, id: m.id, book_key: m.key, kind: m.type, parser: pv(b), data: data, at: m.at || 0, deleted: !!m.del };
+    return { user_id: session.user.id, id: m.id, book_key: b.key, kind: m.type, parser: pv(b), data: data, at: m.at || 0, deleted: !!m.del };
   }
 
   function pushMarks(keepalive) {
-    var ids = Object.keys(dirty.marks), books = {}, rows = [];
-    A.books().forEach(function (b) { if (b.key) books[b.key] = b; });
+    var ids = Object.keys(dirty.marks), books = {}, byId = {}, rows = [];
+    A.books().forEach(function (b) { byId[b.id] = b; if (b.key) books[b.key] = b; });
     ids.forEach(function (id) {
       var m = A.markById(id);
-      if (!m || !books[m.key]) { delete dirty.marks[id]; return; }
+      if (!m) { delete dirty.marks[id]; return; }
+      // a mark made before its book had a key: it goes once the book has one
+      var b = books[m.key] || (byId[m.b] && byId[m.b].key ? byId[m.b] : null);
+      if (!b) return;
       // pen strokes can be big: send them on their own, not in a keepalive request
       if (keepalive && m.strokes && JSON.stringify(m.strokes).length > 30000) return;
-      rows.push(markRow(m, books[m.key]));
+      rows.push(markRow(m, b));
     });
     if (!rows.length) return save();
     var chain = Promise.resolve();

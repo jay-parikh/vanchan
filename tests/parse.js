@@ -42,6 +42,8 @@ const BOOKS = [
   { file: 'Aptavani-01.epub' },
   { file: 'aaptsutra-01.epub' },
   { file: 'dv102026guj.epub' },
+  { file: 'dv0310.pdf' },
+  { file: 'dv0310guj.epub' },
   { file: 'vanchan/tests/sample.md' }
 ];
 
@@ -49,11 +51,15 @@ const BOOKS = [
 const MUST = {
   'Aptvani-10U.pdf': ['શાસ્ત્રોનો', 'પ્રશ્નોનાં', 'વર્કીંગ'],
   'Brahmcharya(P).pdf': ['બન્ને', 'ઉત્પન્ન', 'તમન્ના', 'સ્ત્રીઓએ', 'સ્ટાર્ટીંગ', 'ક્યાં'],
+  'dv0310.pdf': ['## સંપાદકીય p2\nમનુષ્ય ભલે', '\nઅને એજ અહંકાર', '\nપરમ પૂજ્ય દાદા ભગવાન', '\nઆવાં તો અનેક'],
+  'dv0310guj.epub': ['ક્યાંકથી', 'ક્યાંય'],
   'Aptvani-1.pdf': ['ટ્રુથ', 'ૐ', '૨૦%', 'ટર્નીંગ'],
   'Anticancer Living by Cohen and Jefferies_ Summary, Lessons and P.pdf': ['findings', 'confirmation', 'fight'],
   'The 5AM Club by Robin Sharma_ Summary, Practical Guide and Evide.pdf': ['first hour', 'Own the first hour']
 };
-const MUST_NOT = [/[ﬀ-ﬆ]/, /[-]/, /\bnndings\b|\brst hour\b/];
+const MUST_NOT = [/[ﬀ-ﬆ]/, /[-]/, /\bnndings\b|\brst hour\b/,
+  /સંપાદકીય સંપાદકીય/,                                 // a heading drawn five times for fake bold
+  /([\u0A81-\u0A83\u0ABE-\u0ACD])\1/];                // a vowel sign or anusvara twice
 // Latin-1 / glyph-code leftovers inside Gujarati words mean an unmapped legacy glyph
 // (curly quotes are real punctuation in the output, so they don't count)
 const LEFTOVER = /[\u0A80-\u0AFF][A-Za-z`\u00F8\u201E\u0178\u0080-\u00FF]|[A-Za-z`\u00F8\u201E\u0178\u0080-\u00FF][\u0A80-\u0AFF]/;

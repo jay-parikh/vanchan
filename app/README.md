@@ -99,8 +99,11 @@ read further, a "Continue from …" message offers to go there.
 ## Highlights, notes and pen
 
 - **Words:** select them, then tap **Highlight** (your last colour) or **Note**.
-  Tap a highlight to change its colour (4), add or remove an underline, open
-  its note, or remove it. A highlight can run across paragraphs.
+  Note opens the note sheet first; when you save, the words get an underline
+  and a small note mark (no colour; add one from their bar if you like).
+  Closing the sheet without saving marks nothing. Tap a highlight to change
+  its colour (4), add or remove an underline, open its note, or remove it.
+  A highlight can run across paragraphs.
 - **Notes:** one sheet, **Type** or **Write by hand** (lined paper with pen,
   eraser and undo). It remembers which one you used last. Notes go on
   selected words, or on the whole card with ⋯ → "Note on this card".

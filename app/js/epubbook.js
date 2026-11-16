@@ -37,7 +37,9 @@
     return out;
   }
 
-  function clean(s) { return s.replace(/[ \s]+/g, ' ').trim(); }
+  // a vowel sign or anusvara typed twice in the source ("ક્યાંંક"): once is meant
+  var DOUBLED_MARK = /([\u0A81-\u0A83\u0ABC\u0ABE-\u0ACD\u0AE2\u0AE3])\1+/g;
+  function clean(s) { return s.replace(DOUBLED_MARK, '$1').replace(/[ \s]+/g, ' ').trim(); }
 
   // Walk the body and emit headings and paragraphs in reading order.
   // state.label carries the current printed page across chapter files.

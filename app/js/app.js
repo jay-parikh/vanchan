@@ -581,36 +581,55 @@
     return parts.length ? parts : null;
   }
 
+  // the words the bar was shown for: a device may clear the selection as the bar is tapped
+  function chosenParts() {
+    const live = selectionParts();
+    if (live) return live;
+    const id = S.els.cur && S.els.cur.dataset.id;
+    return S.sel && id && S.sel.id === id ? S.sel.parts : null;
+  }
+
   function onSelection() {
     if (S.inking) { clearSelection(); return; }
     const bar = $('selBar');
-    if (!hasSelection() || !selectionParts()) { bar.hidden = true; return; }
+    const parts = hasSelection() ? selectionParts() : null;
+    if (!parts) { bar.hidden = true; return; }
+    S.sel = { id: S.els.cur.dataset.id, parts };
     // new words chosen while a highlight's bar is open (a long-press makes no click to close it)
     $('markBar').hidden = true; S.editing = null;
     $('selDot').style.background = Marks.DOTS[lastColor()];
     placeBar(bar, window.getSelection().getRangeAt(0).getBoundingClientRect());
   }
 
-  // makes marks of the selected words; overlapping marks are taken in (their note kept)
-  function markSelection(color) {
-    const parts = selectionParts();
-    if (!parts) return null;
-    const id = S.els.cur.dataset.id, c = S.cards[id];
+  // marks these words of a card; marks already on them are taken in (their colour and note kept)
+  function markParts(id, parts, style, note) {
+    const c = S.cards[id];
     const grp = parts.length > 1 ? Marks.newId() : null;
-    let keptNote = null;
+    let keptNote = note || null;
     const made = parts.map((pt) => {
-      let s = pt.s, e = pt.e;
+      let s = pt.s, e = pt.e, color = style.color, ul = style.ul;
       marksOfCard(id).filter((m) => m.type === 'text' && m.p === pt.p && m.s < e && m.e > s).forEach((m) => {
         s = Math.min(s, m.s); e = Math.max(e, m.e);
+        if (m.color && !color) color = m.color;
+        if (m.ul) ul = true;
         if (m.note && !keptNote) keptNote = m.note;
         removeMark(m);
       });
-      return newMark('text', c.b, Object.assign({ n: c.n, p: pt.p, s, e, color, ul: false }, Marks.context(pt.text, s, e), grp ? { grp } : {}));
+      return newMark('text', c.b, Object.assign({ n: c.n, p: pt.p, s, e, color, ul }, Marks.context(pt.text, s, e), grp ? { grp } : {}));
     });
     if (keptNote) made[made.length - 1].note = keptNote;
     made.forEach(saveMark);
-    window.getSelection().removeAllRanges();
+    S.sel = null;
+    clearSelection();
     hideBars();
+    return made;
+  }
+
+  // Highlight: the chosen words in the last colour used
+  function markSelection(color) {
+    const parts = chosenParts();
+    if (!parts) return null;
+    const made = markParts(S.els.cur.dataset.id, parts, { color, ul: false });
     render();
     return made[made.length - 1];
   }
@@ -623,6 +642,8 @@
     const bar = $('markBar');
     bar.querySelectorAll('.mb-color').forEach((d) => d.classList.toggle('on', d.dataset.c === m.color));
     $('mbUnder').classList.toggle('on', !!m.ul);
+    // noted words with no colour are shown by their underline: it can't be taken off alone
+    $('mbUnder').hidden = !m.color && !!groupOf(m).find((x) => x.note);
     placeBar(bar, rect);
   }
 
@@ -635,7 +656,14 @@
   function setupMarking() {
     document.addEventListener('selectionchange', debounce(onSelection, 150));
     $('selHighlight').onclick = () => markSelection(lastColor());
-    $('selNote').onclick = () => { const m = markSelection(lastColor()); if (m) openNote({ mark: m }); };
+    // Note: the note sheet first; the words are marked only when the note is saved
+    $('selNote').onclick = () => {
+      const parts = chosenParts();
+      if (!parts) return;
+      const id = S.els.cur.dataset.id;
+      clearSelection(); hideBars();
+      openNote({ cardId: id, words: parts });
+    };
     $('markBar').querySelectorAll('.mb-color').forEach((d) => {
       d.onclick = () => {
         const m = S.editing;
@@ -672,17 +700,19 @@
 
   const NOTE = { target: null, mode: 'type', surface: null, ink: [] };
 
-  // target: { mark } (words or a card note) or { cardId } (new card note)
+  // target: { mark } (words or a card note), { cardId, words } (a note on chosen words) or { cardId } (card note)
   function openNote(target) {
     let m = target.mark;
-    if (!m && target.cardId) m = marksOfCard(target.cardId).find((x) => x.type === 'cardnote');
+    if (!m && target.cardId && !target.words) m = marksOfCard(target.cardId).find((x) => x.type === 'cardnote');
     const cardId = m ? m.b + ':' + m.n : target.cardId, c = S.cards[cardId], book = c && S.bookById[c.b];
-    NOTE.target = { mark: m || null, cardId };
+    NOTE.target = { mark: m || null, cardId, words: target.words || null };
     const note = (m && m.note) || {};
-    $('noteQuote').textContent = m && m.type === 'text'
-      ? '“' + groupOf(m).map((x) => x.q).join(' … ') + '”' + (book ? ' · ' + pageText(c, book) : '')
+    const quote = m && m.type === 'text' ? groupOf(m).map((x) => x.q).join(' … ')
+      : target.words ? target.words.map((pt) => pt.text.slice(pt.s, pt.e)).join(' … ') : null;
+    $('noteQuote').textContent = quote !== null
+      ? '“' + quote + '”' + (book ? ' · ' + pageText(c, book) : '')
       : (c ? (c.t || cardLabel(c)) + ' · ' + (book ? book.title : '') : '');
-    $('noteBar').style.background = m && m.type === 'text' && m.color ? Marks.DOTS[m.color] : 'var(--line)';
+    $('noteBar').style.background = m && m.type === 'text' && m.color ? Marks.DOTS[m.color] : quote !== null ? 'var(--accent)' : 'var(--line)';
     $('noteText').value = note.text || '';
     NOTE.ink = note.ink || [];
     NOTE.mode = note.ink && note.ink.length && !note.text ? 'write' : note.text ? 'type' : store.get('noteMode', 'type');
@@ -730,6 +760,8 @@
     const empty = !note.text && !note.ink;
     if (!m) {
       if (empty) return;
+      // a note on chosen words: they get an underline and the note mark (a colour can be added from their bar)
+      if (t.words) { markParts(t.cardId, t.words, { color: null, ul: true }, note); return; }
       const c = S.cards[t.cardId];
       m = newMark('cardnote', c.b, { n: c.n });
     }
@@ -1455,8 +1487,8 @@
   /* ---------- sheets ---------- */
 
   function openSheet(id) {
-    const s = $(id);
-    if (S.sheets.indexOf(s) >= 0) return;
+    const s = $(id), i = S.sheets.indexOf(s);
+    if (i >= 0) { if (!s.hidden) return; S.sheets.splice(i, 1); }
     if (id === 'sheetLib') renderLibrary();
     if (id === 'sheetSaved') { renderSaved(); renderMarksList(); showSavedTab(); }
     if (id === 'sheetAa') { renderStorageNote(); renderSync(); }
@@ -1835,7 +1867,7 @@
   }
 
   function goodTitle(t) {
-    return t && /[A-Za-z઀-૿]{3,}/.test(t) && !/\.(indd|pmd|p65|qxd|docx?|pdf|txt|rtf|ai|cdr)$/i.test(t) && !/^(untitled|microsoft word)/i.test(t);
+    return t && /[A-Za-z઀-૿]{3,}/.test(t) && !Cards.fileLikeTitle(t) && !/^(untitled|microsoft word)/i.test(t);
   }
 
   async function pdfCover(doc) {
@@ -1883,7 +1915,7 @@
   // so text fixes reach books already in the library.
   //   1  until 2026-11-05     2  ligatures, more old-font glyphs, Markdown
   //   3  the book's printed index becomes a card (PDF contents pages, EPUB contents links)
-  const PARSER = 3;
+  const PARSER = 4;
   const FILE_TYPES = { pdf: 'application/pdf', epub: 'application/epub+zip', md: 'text/markdown' };
 
   // Saves a newly read book (record, cards, original file) and adds it to the
@@ -2218,6 +2250,8 @@
       return false;
     }
     if (!S.bookById[b.id]) return false;          // deleted meanwhile
+    // a title that is the publisher's file name: the book's own file name reads better
+    if (Cards.fileLikeTitle(b.title) && b.file && !b.titleAt) b.title = fileTitle(b.file);
 
     // old card id -> new card id: same position when the count is unchanged,
     // otherwise the card with the same title and opening, otherwise the same

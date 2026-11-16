@@ -201,7 +201,12 @@
     return byTitle(cards);
   }
 
-  var api = { build: build, splitSpeaker: splitSpeaker, words: words, indexTarget: indexTarget };
+  // a PDF's stored title is often the publisher's own file name ("175MAR10.PM5", "BRP-8.PM5")
+  function fileLikeTitle(t) {
+    return !t || /\.(indd|pmd|p65|pm[0-9]|qxd|docx?|pdf|txt|rtf|ai|cdr)$/i.test(t) || (!/\s/.test(t) && /^[\w\-()]+\.[A-Za-z0-9]{2,4}$/.test(t));
+  }
+
+  var api = { build: build, splitSpeaker: splitSpeaker, words: words, indexTarget: indexTarget, fileLikeTitle: fileLikeTitle };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Cards = api;
 })(this);

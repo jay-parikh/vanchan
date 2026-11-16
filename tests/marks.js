@@ -65,11 +65,16 @@ function serve() {
       let b = e.getBoundingClientRect(); if (!b.width || !b.height) return { why: 'not shown' };
       // further down the card or list: scroll to it, as a reader would
       if (b.top < 0 || b.bottom > innerHeight) { e.scrollIntoView({ block: 'center' }); b = e.getBoundingClientRect(); }
-      const x = b.left + b.width / 2, y = b.top + b.height / 2;
-      if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return { why: 'off screen' };
-      const hit = document.elementFromPoint(x, y);
-      if (!hit || !(hit === e || e.contains(hit))) return { why: 'covered by ' + (hit && (hit.id || hit.className || hit.tagName)) };
-      return { x, y };
+      // words that wrap onto a second line: the middle of the box is between the lines, so try each line's middle too
+      const spots = [b].concat(Array.from(e.getClientRects())).map((q) => ({ x: q.left + q.width / 2, y: q.top + q.height / 2 }));
+      let why = '';
+      for (const p of spots) {
+        if (p.x < 0 || p.y < 0 || p.x > innerWidth || p.y > innerHeight) { why = why || 'off screen'; continue; }
+        const hit = document.elementFromPoint(p.x, p.y);
+        if (hit && (hit === e || e.contains(hit))) return p;
+        why = why || 'covered by ' + (hit && (hit.id || hit.className || hit.tagName));
+      }
+      return { why };
     }, sel);
     if (r.why) throw new Error('cannot tap ' + sel + ': ' + r.why);
     await page.mouse.click(r.x, r.y);
@@ -225,8 +230,7 @@ function serve() {
       await tap('#selNote'); await sleep(500);
       check('a new note opens the way the last one was written (by hand)', await page.evaluate(() => document.querySelector('#noteTabs .on').dataset.v === 'write'));
       await back();
-      await page.evaluate((c) => { const sp = Array.from(document.querySelectorAll(c + ' .text .hl')).find((e) => e.closest('p').dataset.i === '3'); sp.click(); }, cur); await sleep(200);
-      await click('#mbRemove'); await sleep(400);
+      check('leaving the note unsaved marks nothing', !(await page.evaluate((c) => Array.from(document.querySelectorAll(c + ' .text .hl')).some((e) => e.closest('p').dataset.i === '3'), cur)));
     }
 
     /* ---------- pen on the card ---------- */
@@ -421,6 +425,40 @@ function serve() {
     await tapAt('#railMarks');
     const g4 = await geo();
     check('tapping a rail opens its panel again', !g4.lf && !g4.rf && g4.lw > 200 && g4.rw > 200 && g4.clear, g4);
+    // a note on chosen words, at iPad width (the side panels are showing)
+    const pW = await page.evaluate((c) => Array.from(document.querySelectorAll(c + ' .text p')).map((p) => p.textContent), cur);
+    // words of the last paragraph, which has no marks yet
+    const pi = pW.length - 1, wordsW = pW[pi].split(' ').slice(0, 3).join(' ');
+    const textMarks = async () => (await marks()).filter((m) => m.type === 'text' && !m.del).length;
+    const marksBefore = await textMarks(), spansBefore = (await hlText()).length;
+    await select(pi, wordsW, wordsW); await sleep(400);
+    check('iPad width: choosing words shows the bar', await page.evaluate(() => !document.getElementById('selBar').hidden));
+    await click('#selNote'); await sleep(600);
+    const noteW = await page.evaluate((q) => ({ open: !document.getElementById('sheetNote').hidden, quote: document.getElementById('noteQuote').textContent.indexOf(q) >= 0 }), wordsW);
+    noteW.marks = await textMarks();
+    check('iPad width: Note opens the note sheet for those words, before any highlight is made', noteW.open && noteW.quote && noteW.marks === marksBefore, [noteW, marksBefore]);
+    await click('#sheetNote [data-close]'); await sleep(500);
+    check('closing the note without saving leaves no mark on the words', (await textMarks()) === marksBefore && (await hlText()).length === spansBefore, [await textMarks(), marksBefore]);
+    await select(pi, wordsW, wordsW); await sleep(400);
+    // iPad clears the chosen words as the bar is touched: the bar still knows them
+    await page.evaluate(() => getSelection().removeAllRanges());
+    await click('#selNote'); await sleep(600);
+    check('Note still opens when the device cleared the selection on the tap', await page.evaluate(() => !document.getElementById('sheetNote').hidden));
+    await page.evaluate(() => document.querySelector('#noteTabs [data-v="type"]').click());
+    await page.type('#noteText', 'note on words');
+    await click('#noteSave'); await sleep(600);
+    const noted = (c, i) => { const sp = document.querySelector(c + ' .text p[data-i="' + i + '"] .hl'); if (sp) sp.id = 'notedW'; return sp ? { cls: sp.className, dot: !!sp.closest('p').querySelector('.note-dot') } : null; };
+    const notedW = await page.evaluate(noted, cur, pi);
+    check('saving puts the note on the words: underlined, with the note mark, no colour', notedW && /\bul\b/.test(notedW.cls) && !/hl-/.test(notedW.cls) && notedW.dot, notedW);
+    // this card has pen marks, so it is drawn with CSS zoom; Chromium 99 reports zoomed words at unzoomed
+    // positions, so a real tap can't be aimed at them here (taps on highlights are checked at phone width above)
+    const tapNoted = () => page.evaluate(() => document.getElementById('notedW').click());
+    await tapNoted(); await sleep(300);
+    check('its bar offers colours and the note, but not U (the underline is what shows the note)', await page.evaluate(() => !document.getElementById('markBar').hidden && document.getElementById('mbUnder').hidden));
+    await click('#markBar .mb-color[data-c="green"]'); await sleep(300);
+    check('a colour can be added to the noted words', /hl-green/.test((await page.evaluate(noted, cur, pi) || {}).cls || ''));
+    await tapNoted(); await sleep(300);
+    await click('#mbRemove'); await sleep(400);
     await page.setViewport({ width: 390, height: 800, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
     await sleep(600);
     check('phone width: no panels and no rails', await page.evaluate(() => document.getElementById('sideToc').hidden && document.getElementById('sideMarks').hidden && getComputedStyle(document.getElementById('railToc')).display === 'none'));

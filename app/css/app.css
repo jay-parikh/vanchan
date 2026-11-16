@@ -359,6 +359,7 @@ body.inking #stack, body.page-pen #viewer, .ink-layer, #vInk, #noteInk {
 
 /* the floating bars over selected words and over a tapped highlight */
 .float-bar {
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;   /* a tap here keeps the chosen words */
   position: fixed; z-index: 30; display: flex; align-items: center; gap: 2px; padding: 6px;
   background: #1E1A16; color: #FFFFFF; border-radius: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.28); font-family: var(--ui);
 }
