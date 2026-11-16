@@ -398,6 +398,19 @@ function serve() {
     await page.reload({ waitUntil: 'networkidle0' }); await sleep(3000);
     check('fixed books are not read again on the next start', !/Text updated/.test(await page.evaluate(() => document.getElementById('toastText').textContent)));
 
+    // a host's badge (like Netlify's "Powered by Netlify" iframe) added over the page is taken out; the app's own parts stay
+    const badge = await page.evaluate(() => new Promise((res) => {
+      const own = document.body.children.length;
+      const f = document.createElement('iframe'); f.id = 'netlify-badge'; f.style.cssText = 'position:fixed;right:8px;bottom:8px;width:160px;height:40px';
+      document.body.appendChild(f);
+      const d = document.createElement('div'); d.className = 'host-badge'; document.documentElement.appendChild(d);
+      setTimeout(() => res({ iframe: !!document.getElementById('netlify-badge'), div: !!document.querySelector('.host-badge'), own, now: document.body.children.length,
+        app: !!document.getElementById('app') && !!document.getElementById('toast') && !!document.getElementById('sheetAa') }), 300);
+    }));
+    check('a badge the host adds over the page is removed, the app\'s own parts stay', !badge.iframe && !badge.div && badge.now === badge.own && badge.app, badge);
+    await page.evaluate(() => document.getElementById('btnAa').click()); await sleep(400);
+    check('… and sheets still open after that', await page.evaluate(() => !document.getElementById('sheetAa').hidden));
+    await page.evaluate(() => history.back()); await sleep(400);
     check('with sync off, not one request went to Supabase', supabaseCalls.length === 0, supabaseCalls.slice(0, 3));
     check('no script errors', errors.length === 0, errors.slice(0, 5));
   } catch (e) {

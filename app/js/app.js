@@ -1135,7 +1135,7 @@
     return new Promise((resolve, reject) => {
       const ta = el('textarea');
       ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-      document.body.appendChild(ta); ta.select();
+      $('app').appendChild(ta); ta.select();
       try { document.execCommand('copy') ? resolve() : reject(); } catch (e) { reject(e); }
       ta.remove();
     });
@@ -2335,5 +2335,26 @@
     });
   }
 
+  /* ---------- nothing from the host over the reader ---------- */
+
+  // A free host may add its own floating badge ("Powered by Netlify") over the
+  // card's buttons. What is on the page when the app starts is the app's own;
+  // anything added at the top level later is taken out (removed, not hidden:
+  // Netlify's badge is an iframe whose script rewrites its style on every resize).
+  function keepPageOwn() {
+    const own = new Set([document.head, document.body].concat(Array.from(document.body.children)));
+    const keep = (e) => own.has(e) || /^(SCRIPT|STYLE|LINK|META|NOSCRIPT|TEMPLATE)$/.test(e.tagName);
+    const clear = () => [document.body, document.documentElement].forEach((parent) => {
+      Array.from(parent.children).forEach((e) => { if (!keep(e)) e.remove(); });
+    });
+    clear();
+    window.addEventListener('load', clear);
+    if (window.MutationObserver) {
+      new MutationObserver(clear).observe(document.documentElement, { childList: true });
+      new MutationObserver(clear).observe(document.body, { childList: true });
+    }
+  }
+
+  keepPageOwn();
   init();
 })();
