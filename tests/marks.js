@@ -241,10 +241,12 @@ function serve() {
     await draw(cur + ' .ink-layer.live', [[0.05, 0.05], [0.4, 0.07], [0.8, 0.06]]);
     let ink = (await marks()).find((m) => m.type === 'ink-card');
     check('a pen stroke on the card is saved right away', ink && ink.strokes.length === 1 && ink.layout && ink.layout.fs === 18, ink && ink.layout);
-    await page.evaluate((c) => document.querySelector(c + ' .pen-tool[data-tool="p"]').click(), cur); await sleep(200);
-    check('tapping Pen again shows its 3 colours', await page.evaluate((c) => { const p = document.querySelector(c + ' .pen-colors'); return p && !p.hidden && p.querySelectorAll('.pen-color').length === 3; }, cur));
-    await page.evaluate((c) => document.querySelectorAll(c + ' .pen-color')[2].click(), cur); await sleep(200);
+    const colors = () => page.evaluate((c) => { const p = document.querySelector(c + ' .pen-colors'); return { shown: !!p && !p.hidden, n: p ? p.querySelectorAll('.pen-color').length : 0, on: p && p.querySelector('.pen-color.on') ? p.querySelector('.pen-color.on').dataset.c : null }; }, cur);
+    check('with Draw on, its 3 colours show above the bar without any extra tap', (await colors()).shown && (await colors()).n === 3, await colors());
+    await click(cur + ' .pen-color[data-c="#C8382B"]'); await sleep(200);
+    check('tapping a colour picks it', (await colors()).on === '#C8382B', await colors());
     await page.evaluate((c) => document.querySelector(c + ' .pen-tool[data-tool="h"]').click(), cur); await sleep(100);
+    check('on Highlight the colours go away', !(await colors()).shown);
     await draw(cur + ' .ink-layer.live', [[0.05, 0.15], [0.6, 0.15]]);
     await page.evaluate((c) => document.querySelector(c + ' .pen-tool[data-tool="p"]').click(), cur); await sleep(100);
     await draw(cur + ' .ink-layer.live', [[0.1, 0.25], [0.2, 0.3]]);

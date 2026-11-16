@@ -341,9 +341,13 @@
       }
     });
 
-    var blocks = [], para = null, head = null;
+    var blocks = [], para = null, head = null, ended = [];   // ended: paragraphs finished on this page, with their last line
     function endPara() {
-      if (para && para.text) blocks.push({ t: 'p', text: para.text, page: para.page, last: para.last });
+      if (para && para.text) {
+        var b = { t: 'p', text: para.text, page: para.page, last: para.last };
+        blocks.push(b);
+        if (para.lastLn) ended.push({ block: b, ln: para.lastLn, right: para.right });
+      }
       para = null;
     }
     function endHead() {
@@ -373,9 +377,22 @@
       var boxes = columnBoxes(lines, bodySize);
       if (boxes.length) docBoxes = boxes; else boxes = docBoxes || [];
       var prev = null;
+      ended = [];
       lines.forEach(function (ln) {
         var ratio = ln.size / bodySize;
         if (ln.heading) {
+          // a signature ("દીપક દેસાઈ" after an editorial): a few words in another font, set flush right
+          // on or just under the last line of a paragraph on this page. It ends that paragraph.
+          var sig = ratio < 1.12 && ln.text.split(' ').length <= 3 && /[A-Za-z\u0A80-\u0AFF]/.test(ln.text) && ended.filter(function (e) {
+            return ln.y <= e.ln.y + 0.5 * ln.size && e.ln.y - ln.y < 2.5 * ln.size &&
+              ln.x0 > e.ln.x0 + 2 * ln.size && Math.abs(ln.x1 - e.right) < 3 * ln.size;   // an ornament may sit after it
+          })[0];
+          if (sig) {
+            endPara(); endHead();
+            blocks.splice(blocks.indexOf(sig.block) + 1, 0, { t: 'p', text: ln.text, page: pi + 1, last: pi + 1 });
+            prev = ln;
+            return;
+          }
           endPara();
           var level = ratio >= 1.35 ? 1 : 2;
           // a heading that wraps onto the next line (or column) keeps its font and size
@@ -394,9 +411,10 @@
         } else if (!box && prev && !startNew && ln.x0 - prev.x0 > 0.8 * bodySize) startNew = true;
         if (!startNew && prev && prev.y > ln.y && prev.y - ln.y > ln.size * 2.4) startNew = true;
         if (!startNew && para && para.shortEnd) startNew = true;
-        if (startNew) { endPara(); para = { text: ln.text, page: pi + 1 }; }
+        if (startNew) { endPara(); para = { text: ln.text, page: pi + 1, right: 0 }; }
         else para.text = joinText(para.text, ln.text);
         para.last = pi + 1;
+        para.lastLn = ln; para.right = Math.max(para.right || 0, ln.x1);
         var pbox = box;
         para.shortEnd = pbox ? ln.x1 < pbox.x1 - 1.5 * bodySize : false;
         prev = ln;

@@ -474,7 +474,7 @@
   }
 
   // [Move | Draw] · Highlight · Eraser · Undo · Done
-  // Move: one finger scrolls the card or page. Draw: one finger draws; tap Draw again for its colours.
+  // Move: one finger scrolls the card or page. Draw: one finger draws, with its colours shown above the bar.
   function penBar(state, done) {
     const bar = el('div', 'pen-bar');
     bar.setAttribute('role', 'toolbar');
@@ -495,20 +495,16 @@
       d.style.setProperty('--c', c);
       d.setAttribute('aria-label', 'Pen colour');
       d.dataset.c = c;
-      d.onclick = (e) => { e.stopPropagation(); state.tool = { t: 'p', c }; store.set('penColor', c); pop.hidden = true; updatePenBar(); };
+      d.onclick = (e) => { e.stopPropagation(); state.tool = { t: 'p', c }; store.set('penColor', c); updatePenBar(); };
       pop.appendChild(d);
     });
     bar.appendChild(pop);
     const mode = el('div', 'pen-mode');
-    mode.appendChild(tool('s', ICON.hand, 'Move', () => { state.tool = { t: 's' }; pop.hidden = true; updatePenBar(); }));
-    mode.appendChild(tool('p', ICON.pen, 'Draw', () => {
-      if (state.tool.t === 'p') pop.hidden = !pop.hidden;
-      else { state.tool = { t: 'p', c: penColor() }; pop.hidden = true; }
-      updatePenBar();
-    }));
+    mode.appendChild(tool('s', ICON.hand, 'Move', () => { state.tool = { t: 's' }; updatePenBar(); }));
+    mode.appendChild(tool('p', ICON.pen, 'Draw', () => { state.tool = { t: 'p', c: penColor() }; updatePenBar(); }));
     bar.appendChild(mode);
-    bar.appendChild(tool('h', ICON.marker, 'Highlight', () => { state.tool = { t: 'h' }; pop.hidden = true; updatePenBar(); }));
-    bar.appendChild(tool('e', ICON.eraser, 'Eraser', () => { state.tool = { t: 'e' }; pop.hidden = true; updatePenBar(); }));
+    bar.appendChild(tool('h', ICON.marker, 'Highlight', () => { state.tool = { t: 'h' }; updatePenBar(); }));
+    bar.appendChild(tool('e', ICON.eraser, 'Eraser', () => { state.tool = { t: 'e' }; updatePenBar(); }));
     bar.appendChild(tool('u', ICON.undo, 'Undo', () => { if (state.surface) state.surface.undo(); updatePenBar(); }));
     const d = el('button', 'primary pen-done', 'Done');
     d.onclick = (e) => { e.stopPropagation(); done(); };
@@ -526,7 +522,10 @@
         if (t === 'p') b.style.color = st.tool.t === 'p' ? st.tool.c : '';
         if (t === 'u') b.disabled = !(st.surface && st.surface.canUndo());
       });
-      bar.querySelectorAll('.pen-color').forEach((d) => d.classList.toggle('on', d.dataset.c === penColor()));
+      // the pen's colours show while Draw is the tool
+      const pop = bar.querySelector('.pen-colors');
+      if (pop) pop.hidden = st.tool.t !== 'p';
+      bar.querySelectorAll('.pen-color').forEach((d) => d.classList.toggle('on', d.dataset.c === st.tool.c));
     });
     const cardLayer = S.inking && S.els.cur && S.els.cur.querySelector('.ink-layer.live');
     if (cardLayer) cardLayer.classList.toggle('scrolling', S.inking.tool.t === 's');

@@ -108,7 +108,7 @@ read further, a "Continue from …" message offers to go there.
   eraser and undo). It remembers which one you used last. Notes go on
   selected words, or on the whole card with ⋯ → "Note on this card".
 - **Pen on a card:** the pen button in the card's footer. Pen, Highlight,
-  Eraser, Undo and Done; tap Pen again for its colours. A card you draw on
+  Eraser, Undo and Done; with Draw on, its three colours show above the bar. A card you draw on
   keeps the text size, font and width it was drawn at, so the marks stay on
   their words.
 - **Pen on a PDF page:** the pen button in the page viewer, with the same
