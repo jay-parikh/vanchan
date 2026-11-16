@@ -341,10 +341,18 @@
       }
     });
 
+    // List markers: some old fonts draw a star where the standard one has "…".
+    // A "…" that opens a clause three or more times in one paragraph is a marker.
+    var MARKER = /(^|[,.?!] )… (?=[\u0A80-\u0AFF])/g;
+    function starMarkers(text) {
+      var n = (text.match(MARKER) || []).length;
+      return n >= 3 ? text.replace(MARKER, '$1* ').replace(/ … (?=[\u0A80-\u0AFF])/g, ' * ') : text;
+    }
+
     var blocks = [], para = null, head = null, ended = [];   // ended: paragraphs finished on this page, with their last line
     function endPara() {
       if (para && para.text) {
-        var b = { t: 'p', text: para.text, page: para.page, last: para.last };
+        var b = { t: 'p', text: starMarkers(para.text), page: para.page, last: para.last };
         blocks.push(b);
         if (para.lastLn) ended.push({ block: b, ln: para.lastLn, right: para.right });
       }
