@@ -390,10 +390,15 @@
 
   // A card with pen marks shows at the text size, font and width they were
   // drawn at (scaled to fit), so the marks stay on their words.
+  // The layout is scaled with a transform, not CSS zoom: Safari's zoom resizes the box but not
+  // text sized by a CSS variable, which moved the words out from under the pen marks.
   function lockLayout(card, body, layout) {
-    const lock = el('div', 'lock');
+    const lock = el('div', 'lock'), box = el('div', 'lock-box');
     while (body.firstChild) lock.appendChild(body.firstChild);
-    body.appendChild(lock);
+    box.appendChild(lock);
+    body.appendChild(box);
+    // the box takes the scaled size, so the card scrolls to the end of the text
+    if (window.ResizeObserver) new ResizeObserver(() => sizeLockBox(lock)).observe(lock);
     lock.style.setProperty('--fs', layout.fs + 'px');
     lock.style.setProperty('--read-font', layout.font === 'sans' ? 'var(--gu-sans)' : 'var(--gu-serif)');
     lock.style.width = layout.w + 'px';
@@ -402,6 +407,12 @@
     cv.setAttribute('aria-hidden', 'true');
     lock.appendChild(cv);
     card.classList.add('locked');
+  }
+
+  function sizeLockBox(lock) {
+    const z = +lock.dataset.z || 1, box = lock.parentNode;
+    box.style.width = (+lock.dataset.w * z) + 'px';
+    box.style.height = (lock.offsetHeight * z) + 'px';
   }
 
   // after the card is on the page: scale the locked layout to the card, then draw its pen marks
@@ -413,7 +424,10 @@
     const avail = body.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     const w = +lock.dataset.w;
     // shrinks to fit a narrower card; on a wider one it keeps (about) its drawn size
-    lock.style.zoom = avail > 0 && w > 0 ? String(Math.min(1.15, avail / w)) : '1';
+    const z = avail > 0 && w > 0 ? Math.min(1.15, avail / w) : 1;
+    lock.dataset.z = z;
+    lock.style.transform = 'scale(' + z + ')';
+    sizeLockBox(lock);
     const ink = marksOfCard(card.dataset.id).find((m) => m.type === 'ink-card');
     const strokes = S.inking && S.inking.id === card.dataset.id ? null : (ink ? ink.strokes : []);
     if (strokes) Ink.paint(lock.querySelector('.ink-layer'), strokes, w, lock.scrollHeight);

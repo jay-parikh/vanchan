@@ -452,15 +452,31 @@ function serve() {
     const noted = (c, i) => { const sp = document.querySelector(c + ' .text p[data-i="' + i + '"] .hl'); if (sp) sp.id = 'notedW'; return sp ? { cls: sp.className, dot: !!sp.closest('p').querySelector('.note-dot') } : null; };
     const notedW = await page.evaluate(noted, cur, pi);
     check('saving puts the note on the words: underlined, with the note mark, no colour', notedW && /\bul\b/.test(notedW.cls) && !/hl-/.test(notedW.cls) && notedW.dot, notedW);
-    // this card has pen marks, so it is drawn with CSS zoom; Chromium 99 reports zoomed words at unzoomed
-    // positions, so a real tap can't be aimed at them here (taps on highlights are checked at phone width above)
-    const tapNoted = () => page.evaluate(() => document.getElementById('notedW').click());
+    const tapNoted = () => click('#notedW');   // on a card with pen marks: words under a scaled layout
     await tapNoted(); await sleep(300);
     check('its bar offers colours and the note, but not U (the underline is what shows the note)', await page.evaluate(() => !document.getElementById('markBar').hidden && document.getElementById('mbUnder').hidden));
     await click('#markBar .mb-color[data-c="green"]'); await sleep(300);
     check('a colour can be added to the noted words', /hl-green/.test((await page.evaluate(noted, cur, pi) || {}).cls || ''));
     await tapNoted(); await sleep(300);
     await click('#mbRemove'); await sleep(400);
+
+    // pen marks stay on their words on every screen: each paragraph keeps its place on the pen layer
+    // (same shape, same line breaks) on iPad portrait, iPad landscape and a phone
+    const onLayer = () => page.evaluate((c) => {
+      const k = document.querySelector(c), cv = k.querySelector('.ink-layer').getBoundingClientRect();
+      return Array.from(k.querySelectorAll('.lock .text p')).map((p) => { const r = p.getBoundingClientRect(); return [r.left - cv.left, r.top - cv.top, r.width, r.height].map((v) => +(v / cv.width).toFixed(3)); });
+    }, cur);
+    const shapes = {};
+    for (const [name, w, h] of [['ipad-portrait', 820, 1180], ['ipad-landscape', 1180, 820], ['phone', 390, 800]]) {
+      await page.setViewport({ width: w, height: h, isMobile: w < 1000, hasTouch: true, deviceScaleFactor: 2 }); await sleep(900);
+      shapes[name] = await onLayer();
+    }
+    const off = (a, b) => Math.max(...a.map((r, i) => Math.max(...r.map((v, j) => Math.abs(v - b[i][j])))));
+    // and no CSS zoom: Safari's zoom doesn't scale text sized by a CSS variable (Chromium's does, so only this catches it)
+    const zoomed = await page.evaluate((c) => getComputedStyle(document.querySelector(c + ' .lock')).zoom, cur);
+    check('pen marks stay on the same words on iPad portrait, iPad landscape and a phone',
+      shapes['ipad-portrait'].length > 1 && off(shapes['ipad-portrait'], shapes['ipad-landscape']) <= 0.005 && off(shapes['ipad-portrait'], shapes.phone) <= 0.005 && (zoomed === '1' || zoomed === 'normal'),
+      { zoomed, landscape: off(shapes['ipad-portrait'], shapes['ipad-landscape']), phone: off(shapes['ipad-portrait'], shapes.phone), first: [shapes['ipad-portrait'][0], shapes.phone[0]] });
     await page.setViewport({ width: 390, height: 800, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
     await sleep(600);
     check('phone width: no panels and no rails', await page.evaluate(() => document.getElementById('sideToc').hidden && document.getElementById('sideMarks').hidden && getComputedStyle(document.getElementById('railToc')).display === 'none'));
